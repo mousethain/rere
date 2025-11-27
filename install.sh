@@ -9,7 +9,7 @@
 # ========================================================
 
 # Define Hosting
-hosting="https://raw.githubusercontent.com/FN-Rerechan02/scvps/main/file"
+hosting="https://raw.githubusercontent.com/mousethain/rere/main/file"
 
 if [ -f "/usr/local/etc/v2ray/domain" ]; then
 echo "Script Already Installed"
