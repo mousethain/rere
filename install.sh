@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ========================================================
 # Credit Code By FN Project
-# Author: Rerechan02 (DindaPutriFN)
+# Mod By : Mousevpn
 # License: This configuration is licensed for personal or internal use only.
 #          Redistribution, resale, or reuse of this code in any form
 #          without explicit written permission from the author is prohibited.
