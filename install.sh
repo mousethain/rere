@@ -421,6 +421,8 @@ iptables-save > /etc/iptables/rules.v4
 clear
 rm -f /root/*
 
+echo "v0.0" > /etc/current_version
+echo "   ✓ Versi lokal ditetapkan ke v0.0. Sistem siap untuk update berikutnya."
 echo -e "menu" >> /root/.profile
 clear
 echo -e "Success Install"
