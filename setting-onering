@@ -1,0 +1,37 @@
+#!/bin/bash
+# Script: seting-onering
+# Lokasi: /usr/local/sbin/seting-onering
+
+# --- WARNA ---
+RED='\e[31m'
+GREEN='\e[32m'
+YELLOW='\e[33m'
+NC='\e[0m'
+
+clear
+echo -e "───────────────────────────"
+echo -e "   Set Domain Onering SNI  "
+echo -e "───────────────────────────"
+
+# Ambil nilai ONERING_SNI terbaru untuk ditampilkan
+local_onering_sni=$(cat /usr/local/etc/v2ray/onering_sni 2>/dev/null)
+if [ -z "$local_onering_sni" ]; then
+    local_onering_sni="N/A (Set me up!)"
+fi
+
+echo -e "SNI Saat Ini: ${local_onering_sni}"
+echo ""
+read -rp "Masukkan Domain/SNI Baru untuk Onering: " new_onering_sni
+
+if [ -z "$new_onering_sni" ]; then
+    echo -e "${RED}!! Pembatalan: SNI tidak boleh kosong.${NC}"
+    sleep 2
+    exit 1
+fi
+
+# Tulis SNI baru ke file konfigurasi
+echo "$new_onering_sni" > /usr/local/etc/v2ray/onering_sni
+
+echo -e "${GREEN}✓ Sukses! Onering SNI telah diatur ke: ${new_onering_sni}${NC}"
+echo -e "${YELLOW}>> Harap buat ulang akun Vless/Vmess untuk menggunakan SNI ini.${NC}"
+sleep 3
