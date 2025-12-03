@@ -1,16 +1,12 @@
 #!/bin/bash
 # ========================================================
-# Xray Core Update Script
-# Versi: v1.0 (Onering Support)
-# Perhatian: Script ini dijalankan dari /tmp
+# Xray Core Update Script (Final Version)
 # ========================================================
 
-# --- KONFIGURASI REPO ---
-# Pastikan URL ini sesuai dengan lokasi file Anda di GitHub
+# --- KONFIGURASI ---
 REPO_URL="https://raw.githubusercontent.com/mousethain/rere"
-# Ambil versi target dari argumen pertama
 VERSION_TO_INSTALL="$1" 
-# ------------------------
+# -------------------
 
 # Output Warna
 RED='\033[0;31m'
@@ -18,21 +14,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# Daftar script yang akan diganti
-declare -a SCRIPTS=("menu" "add-vless" "add-vmess")
-
-# --- FUNGSI PEMBERSIHAN (OPSIONAL) ---
 cleanup_old_files() {
-    echo -e "${YELLOW}>> Memeriksa dan membersihkan file script lama (jika ada)...${NC}"
-    # Contoh: Hapus script yang mungkin sudah tidak terpakai dari versi lama
-    # rm -f /usr/local/bin/old_deprecated_script 
+    # Fungsi ini bisa diisi jika ada file yang perlu dihapus (legacy)
+    echo -e "${YELLOW}>> Memeriksa dan membersihkan file script lama...${NC}"
 }
-# --------------------------------------
 
 main_core_update() {
-    # Pastikan versi target valid
     if [ -z "$VERSION_TO_INSTALL" ]; then
         echo -e "${RED}!! Error: Versi target update tidak ditemukan. Proses dibatalkan.${NC}"
+        # Wajib exit dengan status non-nol agar update lokal tidak mencatat versi
         return 1
     fi
     
@@ -40,50 +30,62 @@ main_core_update() {
     echo -e "${GREEN}  Memulai Instalasi Core Versi ${VERSION_TO_INSTALL} ${NC}"
     echo -e "${GREEN}==============================================${NC}"
 
-    # 1. Pembersihan File Lama
+    # A. Pembersihan
     cleanup_old_files
     
-    # 2. Download dan Penggantian Script Inti (Menu, Add-Vless, Add-Vmess)
-    echo -e "${YELLOW}>> Mengunduh dan mengganti script utama (${SCRIPTS[*]}) ...${NC}"
+    # B. Download dan Penggantian Script Inti (Hapus file lama, ganti dengan yang baru)
+    echo -e "${YELLOW}>> Mengunduh dan mengganti script utama...${NC}"
+
+    # Tambahkan semua script yang Anda perbarui di sini
+    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "update")
+    ALL_SUCCESS=true
 
     for script in "${SCRIPTS[@]}"; do
         SCRIPT_URL="$REPO_URL/$VERSION_TO_INSTALL/$script"
         TARGET_PATH="/usr/local/bin/$script"
         
-        echo -e "${YELLOW}  -> Mengunduh $script...${NC}"
-        if ! wget -q "$SCRIPT_URL" -O "$TARGET_PATH"; then
-            echo -e "${RED}!! Gagal mengunduh $script dari $SCRIPT_URL. Lanjutkan ke file berikutnya.${NC}"
+        echo -e "${YELLOW}  -> Mengunduh $script dari $VERSION_TO_INSTALL...${NC}"
+        
+        # 1. Hapus file lama sebelum ganti
+        rm -f "$TARGET_PATH" 
+        
+        # 2. Unduh dan cek status (wget -T 10 = Timeout 10 detik)
+        if ! wget -T 10 -O "$TARGET_PATH" "$SCRIPT_URL"; then
+            echo -e "${RED}!! GAGAL mengunduh $script. URL: $SCRIPT_URL${NC}"
+            ALL_SUCCESS=false
         else
             chmod +x "$TARGET_PATH"
+            echo -e "${GREEN}  -> Berhasil mengganti $script.${NC}"
         fi
     done
     
-    # 3. Konfigurasi Baru: Onering SNI (Wajib ada untuk fitur baru)
+    # C. Konfigurasi Baru: Onering SNI (Membuat file config jika belum ada)
     ONERING_CONFIG_FILE="/usr/local/etc/v2ray/onering_sni"
-    
-    # Pastikan direktori ada (walaupun seharusnya sudah ada)
-    if [ ! -d "/usr/local/etc/v2ray" ]; then
-        mkdir -p "/usr/local/etc/v2ray"
-    fi
-    
-    # Membuat file konfigurasi Onering jika belum ada
     if [ ! -f "$ONERING_CONFIG_FILE" ]; then
         echo -e "${YELLOW}>> Membuat file konfigurasi Onering SNI awal...${NC}"
         echo "N/A (Set me up!)" > "$ONERING_CONFIG_FILE"
         chmod 644 "$ONERING_CONFIG_FILE"
     fi
     
-    # 4. Restart Service
+    # D. Restart Service
     echo -e "${YELLOW}>> Me-restart layanan Xray...${NC}"
     systemctl restart v2ray
     
-    # 5. Informasi Akhir
-    echo -e "${GREEN}==============================================${NC}"
-    echo -e "${GREEN}  Pembaruan Core ${VERSION_TO_INSTALL} Selesai!${NC}"
-    echo -e "${GREEN}  FITUR BARU: Dukungan Onering Tunneling.${NC}"
-    echo -e "${GREEN}  Aksi Selanjutnya: Jalankan 'menu' dan pilih '13. Seting Domain Onering'.${NC}"
-    echo -e "${GREEN}==============================================${NC}"
+    # E. PEMBARUAN KRITIS: Bersihkan Cache Shell (MEMPERBAIKI MASALAH 'MENU' LAMA)
+    echo -e "${YELLOW}>> Membersihkan cache shell komando (hash table)...${NC}"
+    hash -r
+    
+    # F. Laporan Akhir
+    if $ALL_SUCCESS; then
+        echo -e "${GREEN}==============================================${NC}"
+        echo -e "${GREEN}  Pembaruan Core ${VERSION_TO_INSTALL} SUKSES PENUH!${NC}"
+        echo -e "${GREEN}  Silakan jalankan 'menu' dan set Domain Onering (Opsi 13).${NC}"
+        echo -e "${GREEN}==============================================${NC}"
+        return 0 # Status Sukses
+    else
+        echo -e "${RED}!! Peringatan: Beberapa file gagal diunduh. Pembaruan mungkin tidak lengkap.${NC}"
+        return 1 # Status Gagal
+    fi
 }
 
-# Jalankan fungsi utama, meneruskan semua argumen (yaitu Versi Target)
 main_core_update "$@"
