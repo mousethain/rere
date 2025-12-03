@@ -104,7 +104,7 @@ systemctl restart v2ray proxy danted badvpn udp-custom nginx sslh ; clear ; echo
 sleep 5 ; menu ;;
 11) menu-api ;;
 12) slowdns ;;
-13) seting-onering ;; # PANGGIL FUNGSI BARU
+13) setting-onering ;; # PANGGIL FUNGSI BARU
 *) menu ;;
 esac
 
