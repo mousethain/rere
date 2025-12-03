@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================================
-# Xray Core Update Script (Versi Transaksional Aman)
+# Xray Core Update Script (Final Version - Transaksional)
 # ========================================================
 
 # --- KONFIGURASI ---
@@ -24,9 +24,11 @@ main_core_update() {
     echo -e "${GREEN}  Memulai Instalasi Core Versi ${VERSION_TO_INSTALL} ${NC}"
     echo -e "${GREEN}==============================================${NC}"
 
-    TARGET_DIR="/usr/local/sbin" # LOKASI YANG BENAR
+    TARGET_DIR="/usr/local/sbin" # Lokasi Instalasi Final: /usr/local/sbin/
     TEMP_DIR="/tmp"
-    declare -a SCRIPTS=("menu" "add-vless" "add-vmess") # File yang di-update
+    
+    # KOREKSI KRITIS: Menambahkan seting-onering ke daftar unduhan
+    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "seting-onering")
     ALL_SUCCESS=true
     
     echo -e "${YELLOW}>> Mengunduh dan mengganti script utama ke $TARGET_DIR...${NC}"
@@ -39,28 +41,28 @@ main_core_update() {
 
         echo -e "${YELLOW}  -> Memproses $script...${NC}"
 
-        # 1. Backup file lama (jika ada)
+        # 1. Backup file lama (Logika Transaksional)
         if [ -f "$TARGET_PATH" ]; then
             echo -e "${YELLOW}     -> Mencadangkan file lama ke $BACKUP_PATH${NC}"
-            cp -p "$TARGET_PATH" "$BACKUP_PATH" # cp -p menjaga permissions
+            cp -p "$TARGET_PATH" "$BACKUP_PATH" 
         fi
         
-        # 2. Unduh file baru ke /tmp
+        # 2. Unduh file baru
         if ! wget -T 10 -O "$DOWNLOAD_PATH" "$SCRIPT_URL"; then
             echo -e "${RED}!! GAGAL mengunduh $script dari GitHub.${NC}"
             ALL_SUCCESS=false
             
-            # Rollback (kembalikan file dari backup jika download gagal)
+            # Rollback (jika gagal)
             if [ -f "$BACKUP_PATH" ]; then
                 mv "$BACKUP_PATH" "$TARGET_PATH"
                 echo -e "${YELLOW}     -> Gagal: Mengembalikan $script dari backup.${NC}"
             fi
+            rm -f "$DOWNLOAD_PATH"
         else
-            # 3. Pindahkan file baru ke lokasi TARGET, berikan izin eksekusi
+            # 3. Instalasi dan Cleanup (jika sukses)
             mv "$DOWNLOAD_PATH" "$TARGET_PATH"
             chmod +x "$TARGET_PATH"
             
-            # Hapus backup setelah sukses
             if [ -f "$BACKUP_PATH" ]; then
                 rm -f "$BACKUP_PATH"
             fi
@@ -81,24 +83,23 @@ main_core_update() {
     echo -e "${YELLOW}>> Me-restart layanan Xray...${NC}"
     systemctl restart v2ray
     
-    # E. PEMBARUAN KRITIS: Bersihkan Cache Shell (Memastikan menu baru tereksekusi)
+    # E. KOREKSI CACHE: Membersihkan Cache Shell
     echo -e "${YELLOW}>> Membersihkan cache shell komando (hash table)...${NC}"
     hash -r
     
     # F. Laporan Akhir
     if $ALL_SUCCESS; then
-        # Hapus sisa file update di /usr/local/bin/ yang tidak terpakai lagi
+        # Hapus sisa file di /usr/local/bin/ yang tidak terpakai lagi
         rm -f /usr/local/bin/menu /usr/local/bin/add-vless /usr/local/bin/add-vmess
         
         echo -e "${GREEN}==============================================${NC}"
         echo -e "${GREEN}  Pembaruan Core ${VERSION_TO_INSTALL} SUKSES PENUH!${NC}"
-        echo -e "${GREEN}  Skrip telah dipindahkan ke /usr/local/sbin/.${NC}"
         echo -e "${GREEN}  Silakan jalankan 'menu' dan set Domain Onering (Opsi 13).${NC}"
         echo -e "${GREEN}==============================================${NC}"
-        return 0 # Status Sukses
+        return 0 
     else
         echo -e "${RED}!! Peringatan: Pembaruan GAGAL/Tidak Lengkap. Skrip lama telah dikembalikan.${NC}"
-        return 1 # Status Gagal
+        return 1 
     fi
 }
 
