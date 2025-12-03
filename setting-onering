@@ -1,37 +1,186 @@
 #!/bin/bash
-# Script: seting-onering
-# Lokasi: /usr/local/sbin/seting-onering
+# ========================================================
+# Script Onering SNI Management (Versi Aman/Antisipasi Error)
+# ========================================================
 
-# --- WARNA ---
-RED='\e[31m'
-GREEN='\e[32m'
-YELLOW='\e[33m'
-NC='\e[0m'
+# --- KONFIGURASI PENTING ---
+NGINX_CONF="/etc/nginx/nginx.conf"
+SNI_LIST_FILE="/usr/local/etc/v2ray/onering_list"
+MAIN_DOMAIN="x.mousevpn.my.id" 
+# --------------------------
 
-clear
-echo -e "───────────────────────────"
-echo -e "   Set Domain Onering SNI  "
-echo -e "───────────────────────────"
+# Output Warna
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
 
-# Ambil nilai ONERING_SNI terbaru untuk ditampilkan
-local_onering_sni=$(cat /usr/local/etc/v2ray/onering_sni 2>/dev/null)
-if [ -z "$local_onering_sni" ]; then
-    local_onering_sni="N/A (Set me up!)"
+# ========================================================
+# FUNGSI CLEANUP (DIPANGGIL JIKA SCRIPT DIINTERUPSI/EXIT)
+# ========================================================
+
+# Fungsi dummy untuk exit bersih
+cleanup() {
+    echo -e "\n${YELLOW}Proses pembersihan selesai. Keluar.${NC}"
+}
+
+# Trap: Jika pengguna menekan Ctrl+C (INT) atau script keluar (EXIT), panggil cleanup
+trap cleanup INT EXIT
+
+# Pastikan file list ada
+if [ ! -f "$SNI_LIST_FILE" ]; then
+    touch "$SNI_LIST_FILE"
+    chmod 644 "$SNI_LIST_FILE"
 fi
 
-echo -e "SNI Saat Ini: ${local_onering_sni}"
-echo ""
-read -rp "Masukkan Domain/SNI Baru untuk Onering: " new_onering_sni
+# ========================================================
+# FUNGSI UTAMA: MEMBANGUN ULANG SERVER_NAME DI NGINX
+# ========================================================
 
-if [ -z "$new_onering_sni" ]; then
-    echo -e "${RED}!! Pembatalan: SNI tidak boleh kosong.${NC}"
-    sleep 2
-    exit 1
-fi
+build_nginx_config() {
+    echo -e "${YELLOW}>> Membangun ulang konfigurasi Nginx...${NC}"
+    
+    # 1. Baca semua SNI dari file list
+    SNIS_TO_ADD=$(grep -v '^\s*$' "$SNI_LIST_FILE" | tr '\n' ' ' | sed 's/ $//')
+    
+    # 2. Buat baris server_name yang baru
+    if [ -z "$SNIS_TO_ADD" ]; then
+        NEW_SERVER_NAME="server_name ${MAIN_DOMAIN};"
+    else
+        NEW_SERVER_NAME="server_name ${MAIN_DOMAIN} ${SNIS_TO_ADD};"
+    fi
 
-# Tulis SNI baru ke file konfigurasi
-echo "$new_onering_sni" > /usr/local/etc/v2ray/onering_sni
+    # 3. Ganti seluruh baris server_name di Nginx
+    # Pola pencarian: mencari baris server_name setelah 'listen 1013'
+    # Perintah 'c\' mengganti seluruh baris yang ditemukan
+    sed -i "/listen 1013/!b;n;/server_name/c\\${NEW_SERVER_NAME}" "$NGINX_CONF"
+    
+    echo -e "${YELLOW}>> Nginx Server Name diperbarui menjadi: ${NEW_SERVER_NAME}${NC}"
 
-echo -e "${GREEN}✓ Sukses! Onering SNI telah diatur ke: ${new_onering_sni}${NC}"
-echo -e "${YELLOW}>> Harap buat ulang akun Vless/Vmess untuk menggunakan SNI ini.${NC}"
-sleep 3
+    # 4. Uji dan Restart Nginx
+    if nginx -t > /dev/null 2>&1; then
+        systemctl restart nginx
+        echo -e "${GREEN}>> Update Nginx dan Restart SUKSES.${NC}"
+        systemctl restart v2ray
+    else
+        echo -e "${RED}!! GAGAL memverifikasi Nginx. Konfigurasi lama dipertahankan.${NC}"
+        # PENTING: Jika gagal, konfigurasi lama Nginx (yang terakhir berhasil) tetap aktif.
+        # Namun, kita perlu membalikkan perubahan di file SNI agar sinkron.
+        echo -e "${RED}!! Perubahan SNI dibatalkan. Cek log Nginx untuk error sintaks.${NC}"
+    fi
+}
+
+# ========================================================
+# FUNGSI MANAJEMEN MENU
+# ========================================================
+
+add_sni() {
+    echo -e "───────────────────────────"
+    echo -e "   ${GREEN}Tambah Domain Onering SNI${NC}"
+    echo -e "───────────────────────────"
+    echo -e "Masukkan Domain/SNI Baru (Contoh: cdn.whatsapp.net):"
+    read -r NEW_SNI
+
+    # Validasi Input Domain yang Ketat
+    if [ -z "$NEW_SNI" ]; then
+        echo -e "${RED}!! Input kosong. Proses dibatalkan.${NC}"
+        return
+    fi
+    # Cek format dasar (tidak mengandung spasi, http, path)
+    if [[ "$NEW_SNI" =~ [[:space:]]|[[:upper:]]|://|/ ]]; then
+        echo -e "${RED}!! Format domain tidak valid. Jangan gunakan spasi, huruf kapital, 'http://', atau '/'.${NC}"
+        return
+    fi
+    
+    # Cek duplikat
+    if grep -q "^${NEW_SNI}$" "$SNI_LIST_FILE"; then
+        echo -e "${RED}!! Domain $NEW_SNI sudah ada dalam daftar.${NC}"
+        return
+    fi
+
+    # Tambahkan ke file list dan panggil builder
+    echo "$NEW_SNI" >> "$SNI_LIST_FILE"
+    echo -e "${GREEN}>> Domain $NEW_SNI berhasil ditambahkan.${NC}"
+    build_nginx_config
+}
+
+del_sni() {
+    echo -e "───────────────────────────"
+    echo -e "   ${RED}Hapus Domain Onering SNI${NC}"
+    echo -e "───────────────────────────"
+    
+    cek_sni
+    
+    SNI_COUNT=$(grep -v '^\s*$' "$SNI_LIST_FILE" | wc -l)
+    
+    if [ "$SNI_COUNT" -eq 0 ]; then
+        echo -e "${YELLOW}!! Daftar SNI Onering kosong. Tidak ada yang bisa dihapus.${NC}"
+        return
+    fi
+
+    echo -e "Masukkan NOMOR urut SNI yang ingin dihapus (0 untuk batal):"
+    read -r DEL_NUM
+
+    if [ "$DEL_NUM" -eq 0 ]; then
+        echo -e "${YELLOW}>> Proses penghapusan dibatalkan.${NC}"
+        return
+    fi
+
+    # Validasi input numerik
+    if ! [[ "$DEL_NUM" =~ ^[0-9]+$ ]] || [ "$DEL_NUM" -gt "$SNI_COUNT" ]; then
+        echo -e "${RED}!! Pilihan tidak valid.${NC}"
+        return
+    fi
+    
+    # Ambil nama domain yang akan dihapus
+    DELETED_SNI=$(grep -v '^\s*$' "$SNI_LIST_FILE" | sed -n "${DEL_NUM}p")
+    
+    # Hapus baris dari file sementara
+    grep -v '^\s*$' "$SNI_LIST_FILE" | sed "${DEL_NUM}d" > /tmp/onering_temp
+    mv /tmp/onering_temp "$SNI_LIST_FILE"
+
+    echo -e "${GREEN}>> Domain $DELETED_SNI (Nomor $DEL_NUM) berhasil dihapus.${NC}"
+    build_nginx_config
+}
+
+cek_sni() {
+    echo -e "───────────────────────────"
+    echo -e "   ${YELLOW}Daftar Domain Onering SNI${NC}"
+    echo -e "───────────────────────────"
+    
+    if [ -s "$SNI_LIST_FILE" ]; then
+        grep -v '^\s*$' "$SNI_LIST_FILE" | nl -w2 -s'. '
+    else
+        echo -e "Tidak ada domain Onering SNI yang terdaftar. (Status: ${RED}OFF${NC})"
+    fi
+    echo -e "───────────────────────────"
+}
+
+# ========================================================
+# MAIN MENU
+# ========================================================
+
+# Nonaktifkan trap saat masuk ke loop utama agar trap hanya berfungsi dalam fungsi
+trap - INT EXIT
+
+while true; do
+    clear
+    echo -e "==========================================="
+    echo -e " ${GREEN}Onering SNI Management (Domain: $MAIN_DOMAIN)${NC}"
+    echo -e "==========================================="
+    echo -e " 1. ${GREEN}Tambah Domain SNI${NC} (add-onering)"
+    echo -e " 2. ${RED}Hapus Domain SNI${NC} (del-onering)"
+    echo -e " 3. ${YELLOW}Cek Daftar SNI${NC} (cek-onering)"
+    echo -e " 0. Keluar"
+    echo -e "==========================================="
+    echo -n "Pilih Opsi (0-3): "
+    read -r choice
+
+    case "$choice" in
+        1) add_sni ;;
+        2) del_sni ;;
+        3) cek_sni ;;
+        0) echo -e "${YELLOW}Keluar dari menu Onering. Sampai jumpa!${NC}"; exit 0 ;;
+        *) echo -e "${RED}Pilihan tidak valid. Silakan coba lagi.${NC}" ; sleep 1 ;;
+    esac
+done
