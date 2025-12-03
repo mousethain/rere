@@ -59,7 +59,7 @@ echo -e " IP: $ipsaya"
 echo -e " Ram: $tram MB"
 echo -e " ISP: $asn_info"
 echo -e " Domain: $domain"
-echo -e " Onering SNI: $ONERING_SNI" # TAMBAHAN
+echo -e " Onering SNI: $ONERING_SNI" # TAMPILAN BARU
 echo -e " V2ray Version: $versi "
 echo -e "─────────────────────────────────────────────────────"
 echo -e "Total Account:                                       "
@@ -99,7 +99,7 @@ case $opt in
 7|07) menu-backup ;;
 8|08) update ;;
 9|09) change-domain ;;
-10) clear ; systemctl daemon-reload ; pkill sslh ;
+10) clear ; systemctl daemon-reload ; pkill sslh ; 
 systemctl restart v2ray proxy danted badvpn udp-custom nginx sslh ; clear ; echo -e "success restart all service" ;
 sleep 5 ; menu ;;
 11) menu-api ;;
@@ -119,6 +119,8 @@ seting-onering() {
     
     if [ -n "$NEW_ONERING_SNI" ]; then
         echo "$NEW_ONERING_SNI" > /usr/local/etc/v2ray/onering_sni
+        # Perbarui variabel ONERING_SNI untuk tampilan menu selanjutnya
+        ONERING_SNI="$NEW_ONERING_SNI"
         clear
         echo -e "${GREEN}✓ Berhasil memperbarui Domain Onering menjadi: $NEW_ONERING_SNI${NC}"
     else
