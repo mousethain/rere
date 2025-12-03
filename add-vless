@@ -10,8 +10,14 @@
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-red() { echo -e "\033[32;1m${*}\033[0m"; }
+# --- Ambil Domain Onering dari file baru ---
 domain=$(cat /usr/local/etc/v2ray/domain)
+ONERING_SNI=$(cat /usr/local/etc/v2ray/onering_sni 2>/dev/null)
+if [ -z "$ONERING_SNI" ] || [ "$ONERING_SNI" == "N/A (Set me up!)" ]; then
+    ONERING_SNI="$domain"
+fi
+
+red() { echo -e "\033[32;1m${*}\033[0m"; }
 clear
 until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
 do
@@ -27,31 +33,17 @@ then
         clear
         echo -e "───────────────────────────"
         echo -e "   Add Xray/Vless Account  "
-        echo -e "───────────────────────────"
         echo ""
         echo "please choose another name."
         echo ""
         echo -e "───────────────────────────"
     fi
 done
-
-# --- LOGIKA ONERING BARU DIMULAI DI SINI ---
-# Ambil input domain khusus untuk SNI Onering
-read -rp "Input SNI Onering (Contoh: onering.$domain): " -e SNI_ONERING
-
-if [[ -z "$SNI_ONERING" ]]; then
-    # Jika kosong, gunakan domain utama sebagai default
-    SNI_ONERING="$domain"
-    echo "Menggunakan Domain Utama ($domain) sebagai SNI Host."
-else
-    echo "Menggunakan Domain Onering ($SNI_ONERING) sebagai SNI Host."
-fi
-# --- LOGIKA ONERING BARU BERAKHIR DI SINI ---
-
 #uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
 read -p "Input uuid (Empty Default): " uuid
-if [[ -z "$uuid" || "$uuid" =~ [[:space:]] || ${#uuid} -lt 5 ]]; then
+if [[ -z "$uuid" ||
+"$uuid" =~ [[:space:]] || ${#uuid} -lt 5 ]]; then
     uuid=$(cat /proc/sys/kernel/random/uuid)
     echo "Generated new UUID: $uuid"
 else
@@ -62,19 +54,15 @@ sed -i '/#vless$/a\#& '"$user $exp"'\
 },{"id": "'""$uuid""'","email": "'""$user""'"' /usr/local/etc/v2ray/config.json
 systemctl restart v2ray
 
-# --- MODIFIKASI LINK UNTUK SUPPORT ONERING ---
+# --- LINK VLESS ASLI (MENGGUNAKAN $domain) ---
+vlesslink1="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${domain}&sni=${domain}#${user}-Ori-TLS"
+vlesslink2="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${domain}#${user}-Ori-NTLS"
+vlesslink3="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${domain}#${user}-Ori-GRPC"
 
-# VLESS TLS (WS)
-# Tambahkan &host=${SNI_ONERING}&sni=${SNI_ONERING}
-vlesslink1="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${SNI_ONERING}&sni=${SNI_ONERING}#${user}" 
-
-# VLESS NTLS (WS) - Biasanya tidak perlu SNI, tapi Host diubah ke Onering
-# Tambahkan &host=${SNI_ONERING}
-vlesslink2="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${SNI_ONERING}#${user}"
-
-# VLESS GRPC
-# Ganti sni=${domain} dengan sni=${SNI_ONERING}
-vlesslink3="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${SNI_ONERING}#${user}" 
+# --- LINK VLESS ONERING (MENGGUNAKAN $ONERING_SNI) ---
+vlesslink_onering_tls="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${ONERING_SNI}&sni=${ONERING_SNI}#${user}-Onering-TLS"
+vlesslink_onering_ntls="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${ONERING_SNI}#${user}-Onering-NTLS"
+vlesslink_onering_grpc="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${ONERING_SNI}#${user}-Onering-GRPC"
 
 # --- AKHIR MODIFIKASI LINK ---
 
@@ -89,16 +77,23 @@ TEKS=$(cat <<EOF
 <b>UUID/ID     : </b><code>${uuid}</code>
 <b>Path        : </b><code>/vless</code>
 <b>ServiceName : </b><code>vless-grpc</code>
-<b>SNI Host    : </b><code>${SNI_ONERING}</code> <font color="#00ff00">(Onering Payload)</font>
+<b>SNI Host    : </b><code>${ONERING_SNI}</code> <font color="#00ff00">(Onering Payload)</font>
 <b>───────────────────</b>
+<b>1. Link Standar (SNI/Host: ${domain})</b>
 <b>Link TLS    :</b>
 <pre>${vlesslink1}</pre>
-<b>───────────────────</b>
 <b>Link NTLS  :</b>
 <pre>${vlesslink2}</pre>
-<b>───────────────────</b>
 <b>Link GRPC   :</b>
 <pre>${vlesslink3}</pre>
+<b>───────────────────</b>
+<b>2. Link Onering (SNI/Host: ${ONERING_SNI})</b>
+<b>Link TLS Onering :</b>
+<pre>${vlesslink_onering_tls}</pre>
+<b>Link NTLS Onering :</b>
+<pre>${vlesslink_onering_ntls}</pre>
+<b>Link GRPC Onering :</b>
+<pre>${vlesslink_onering_grpc}</pre>
 <b>───────────────────</b>
 <b>Expired On  : </b><code>$exp</code>
 <b>───────────────────</b>
@@ -121,13 +116,17 @@ echo -e "Port Ntls   : 80, 2082"
 echo -e "UUID/ID     : ${uuid}"
 echo -e "Path        : /vless"
 echo -e "ServiceName : vless-grpc"
-echo -e "SNI Host    : ${SNI_ONERING} (Onering Payload)"
+echo -e "SNI Payload : ${ONERING_SNI}"
 echo -e "───────────────────"
+echo -e "1. Link Standar (SNI/Host: ${domain})"
 echo -e "Link TLS    : ${vlesslink1}"
-echo -e "───────────────────"
 echo -e "Link NTLS   : ${vlesslink2}"
-echo -e "───────────────────"
 echo -e "Link GRPC   : ${vlesslink3}"
+echo -e "───────────────────"
+echo -e "2. Link Onering (SNI/Host: ${ONERING_SNI})"
+echo -e "Link TLS Onering: ${vlesslink_onering_tls}"
+echo -e "Link NTLS Onering: ${vlesslink_onering_ntls}"
+echo -e "Link GRPC Onering: ${vlesslink_onering_grpc}"
 echo -e "───────────────────"
 echo -e "Expired On  : $exp"
 echo -e "───────────────────"
