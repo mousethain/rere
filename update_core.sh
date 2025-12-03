@@ -22,7 +22,6 @@ cleanup_old_files() {
 main_core_update() {
     if [ -z "$VERSION_TO_INSTALL" ]; then
         echo -e "${RED}!! Error: Versi target update tidak ditemukan. Proses dibatalkan.${NC}"
-        # Wajib exit dengan status non-nol agar update lokal tidak mencatat versi
         return 1
     fi
     
@@ -36,8 +35,8 @@ main_core_update() {
     # B. Download dan Penggantian Script Inti (Hapus file lama, ganti dengan yang baru)
     echo -e "${YELLOW}>> Mengunduh dan mengganti script utama...${NC}"
 
-    # Tambahkan semua script yang Anda perbarui di sini
-    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "update")
+    # --- PERBAIKAN DI SINI: MENGHAPUS "update" DARI DAFTAR SCRIPT ---
+    declare -a SCRIPTS=("menu" "add-vless" "add-vmess") 
     ALL_SUCCESS=true
 
     for script in "${SCRIPTS[@]}"; do
@@ -71,7 +70,7 @@ main_core_update() {
     echo -e "${YELLOW}>> Me-restart layanan Xray...${NC}"
     systemctl restart v2ray
     
-    # E. PEMBARUAN KRITIS: Bersihkan Cache Shell (MEMPERBAIKI MASALAH 'MENU' LAMA)
+    # E. PEMBARUAN KRITIS: Bersihkan Cache Shell (Memperbaiki masalah 'menu' lama)
     echo -e "${YELLOW}>> Membersihkan cache shell komando (hash table)...${NC}"
     hash -r
     
