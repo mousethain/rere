@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# ========================================================
+# Credit Code By mousevpn
+# Author: mousevpn
+# License: This configuration is licensed for personal or internal use only.
+#          Redistribution, resale, or reuse of this code in any form
+#          without explicit written permission from the author is prohibited.
+#          Selling this code or its derivatives is strictly forbidden.
+# ========================================================
+telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
+telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
+
+# --- Ambil Domain Onering dari file baru ---
+domain=$(cat /usr/local/etc/v2ray/domain)
+ONERING_SNI=$(cat /usr/local/etc/v2ray/onering_sni 2>/dev/null)
+if [ -z "$ONERING_SNI" ] || [ "$ONERING_SNI" == "N/A (Set me up!)" ]; then
+    ONERING_SNI="$domain"
+fi
+
+clear
+until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
+do
+    clear
+    echo -e "───────────────────────────"
+    echo -e "   Add Xray/Vmess Account  "
+    echo -e "───────────────────────────"
+    
+    read -rp "User: " -e user
+    CLIENT_EXISTS=$(grep -w $user /usr/local/etc/v2ray/config.json | wc -l)
+    
+    if [[ ${CLIENT_EXISTS} == '1' ]];
+then
+        clear
+        echo -e "───────────────────────────"
+        echo -e "   Add Xray/Vmess Account   "
+        echo ""
+        echo "please choose another name."
+        echo ""
+        echo -e "───────────────────────────"
+    fi
+done
+
+#uuid=$(cat /proc/sys/kernel/random/uuid)
+read -p "Expired (days): " masaaktif
+read -p "Input uuid (Empty Default): " uuid
+if [[ -z "$uuid" ||
+"$uuid" =~ [[:space:]] || ${#uuid} -lt 5 ]]; then
+    uuid=$(cat /proc/sys/kernel/random/uuid)
+    echo "Generated new UUID: $uuid"
+else
+    echo "Using provided UUID: $uuid"
+fi
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+sed -i '/#vmess$/a\### '"$user $exp"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /usr/local/etc/v2ray/config.json
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+
+# --- TEMPLAT LINK VMESS ASLI (MENGGUNAKAN $domain) ---
+
+# Link TLS (VMess WS)
+acs=`cat<<EOF
+      {
+      "v": "2", "ps": "${user}-Ori-TLS", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
+      "net": "ws", "path": "/vmess", "type": "none", "host": "${domain}", "tls": "tls", "sni": "${domain}"
+}
+EOF`
+
+# Link NTLS (VMess WS)
+ask=`cat<<EOF
+      {
+      "v": "2", "ps": "${user}-Ori-NTLS", "add": "${domain}", "port": "80", "id": "${uuid}", "aid": "0",
+      "net": "ws", "path": "/vmess", "type": "none", "host": "${domain}", "tls": "none"
+}
+EOF`
+
+# Link GRPC (VMess GRPC)
+grpc=`cat<<EOF
+      {
+      "v": "2", "ps": "${user}-Ori-GRPC", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
+      "net": "grpc", "path": "vmess-grpc", "type": "none", "host": "${domain}", "tls": "tls", "sni": "${domain}"
+}
+EOF`
+
+# --- TEMPLAT LINK VMESS ONERING (MENGGUNAKAN $ONERING_SNI) ---
+
+# Link TLS Onering
+acs_onering=`cat<<EOF
+      {
+      "v": "2", "ps": "${user}-Onering-TLS", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
+      "net": "ws", "path": "/vmess", "type": "none", "host": "${ONERING_SNI}", "tls": "tls", "sni": "${ONERING_SNI}"
+}
+EOF`
+
+# Link NTLS Onering
+ask_onering=`cat<<EOF
+      {
+      "v": "2", "ps": "${user}-Onering-NTLS", "add": "${domain}", "port": "80", "id": "${uuid}", "aid": "0",
+      "net": "ws", "path": "/vmess", "type": "none", "host": "${ONERING_SNI}", "tls": "none"
+}
+EOF`
+
+# Link GRPC Onering
+grpc_onering=`cat<<EOF
+      {
+      "v": "2", "ps": "${user}-Onering-GRPC", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
+      "net": "grpc", "path": "vmess-grpc", "type": "none", "host": "${ONERING_SNI}", "tls": "tls", "sni": "${ONERING_SNI}"
+}
+EOF`
+
+# --- ENCODING LINK ---
+vmesslink1="vmess://$(echo $acs | base64 -w 0)"
+vmesslink2="vmess://$(echo $ask | base64 -w 0)"
+vmesslink3="vmess://$(echo $grpc | base64 -w 0)"
+
+vmesslink_onering_tls="vmess://$(echo $acs_onering | base64 -w 0)"
+vmesslink_onering_ntls="vmess://$(echo $ask_onering | base64 -w 0)"
+vmesslink_onering_grpc="vmess://$(echo $grpc_onering | base64 -w 0)"
+
+systemctl restart v2ray
+
+TEKS=$(cat <<EOF
+<b>───────────────────</b>
+   VMESS ACCOUNT   
+<b>───────────────────</b>
+<b>Remarks     : </b><code>${user}</code>
+<b>Domain      : </b><code>${domain}</code>
+<b>Port Tls    : </b><code>443</code>
+<b>Port Ntls   : </b><code>80, 2082</code>
+<b>ID          : </b><code>${uuid}</code>
+<b>Encryption  : </b><code>none</code>
+<b>Path        : </b><code>/whatever, /multipath</code>
+<b>ServiceName : </b><code>vmess-grpc</code>
+<b>SNI Host    : </b><code>${ONERING_SNI}</code> <font color="#00ff00">(Onering Payload)</font>
+<b>───────────────────</b>
+<b>1. Link Standar (SNI/Host: ${domain})</b>
+<b>Link TLS    :</b>
+<pre>${vmesslink1}</pre>
+<b>Link NTLS   :</b>
+<pre>${vmesslink2}</pre>
+<b>Link GRPC   :</b>
+<pre>${vmesslink3}</pre>
+<b>───────────────────</b>
+<b>2. Link Onering (SNI/Host: ${ONERING_SNI})</b>
+<b>Link TLS Onering :</b>
+<pre>${vmesslink_onering_tls}</pre>
+<b>Link NTLS Onering :</b>
+<pre>${vmesslink_onering_ntls}</pre>
+<b>Link GRPC Onering :</b>
+<pre>${vmesslink_onering_grpc}</pre>
+<b>───────────────────</b>
+<b>Expired On : </b><code>$exp</code>
+<b>───────────────────</b>
+EOF
+)
+
+curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+    -d "chat_id=$telegram_chatid" \
+    -d "parse_mode=HTML" \
+    --data-urlencode "text=$TEKS" > /dev/null
+
+clear
+echo -e "───────────────────"
+echo -e "   VMESS ACCOUNT   "
+echo -e "───────────────────"
+echo -e "Remarks     : ${user}" 
+echo -e "Domain      : ${domain}" 
+echo -e "Port Tls    : 443" 
+echo -e "Port Ntls   : 80, 2082" 
+echo -e "ID          : ${uuid}"
+echo -e "Encryption  : none" 
+echo -e "Path        : /whatever, /multipath"
+echo -e "ServiceName : vmess-grpc"
+echo -e "SNI Payload : ${ONERING_SNI}"
+echo -e "───────────────────"
+echo -e "1. Link Standar (SNI/Host: ${domain})"
+echo -e "Link TLS    : ${vmesslink1}" 
+echo -e "Link NTLS   : ${vmesslink2}" 
+echo -e "Link GRPC   : ${vmesslink3}" 
+echo -e "───────────────────"
+echo -e "2. Link Onering (SNI/Host: ${ONERING_SNI})"
+echo -e "Link TLS Onering: ${vmesslink_onering_tls}" 
+echo -e "Link NTLS Onering: ${vmesslink_onering_ntls}" 
+echo -e "Link GRPC Onering: ${vmesslink_onering_grpc}" 
+echo -e "───────────────────"
+echo -e "Expired On : $exp" 
+echo -e "───────────────────"
+echo ""
