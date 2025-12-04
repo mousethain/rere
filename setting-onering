@@ -1,11 +1,12 @@
 #!/bin/bash
 # ========================================================
-# Script Onering SNI Management (Versi Aman/Antisipasi Error)
+# Script Onering SNI Management (Versi Aman/Menu Lengkap)
 # ========================================================
 
 # --- KONFIGURASI PENTING ---
 NGINX_CONF="/etc/nginx/nginx.conf"
 SNI_LIST_FILE="/usr/local/etc/v2ray/onering_list"
+# GANTI INI: Pastikan ini adalah DOMAIN UTAMA yang ada di sertifikat Anda
 MAIN_DOMAIN="x.mousevpn.my.id" 
 # --------------------------
 
@@ -16,14 +17,13 @@ YELLOW='\033[0;33m'
 NC='\033[0m'
 
 # ========================================================
-# FUNGSI CLEANUP (DIPANGGIL JIKA SCRIPT DIINTERUPSI/EXIT)
+# FUNGSI KEAMANAN DAN INITIALIZATION
 # ========================================================
 
 # Fungsi dummy untuk exit bersih
 cleanup() {
     echo -e "\n${YELLOW}Proses pembersihan selesai. Keluar.${NC}"
 }
-
 # Trap: Jika pengguna menekan Ctrl+C (INT) atau script keluar (EXIT), panggil cleanup
 trap cleanup INT EXIT
 
@@ -51,8 +51,7 @@ build_nginx_config() {
     fi
 
     # 3. Ganti seluruh baris server_name di Nginx
-    # Pola pencarian: mencari baris server_name setelah 'listen 1013'
-    # Perintah 'c\' mengganti seluruh baris yang ditemukan
+    # Mencari baris 'server_name' setelah 'listen 1013' dan menggantinya.
     sed -i "/listen 1013/!b;n;/server_name/c\\${NEW_SERVER_NAME}" "$NGINX_CONF"
     
     echo -e "${YELLOW}>> Nginx Server Name diperbarui menjadi: ${NEW_SERVER_NAME}${NC}"
@@ -64,8 +63,6 @@ build_nginx_config() {
         systemctl restart v2ray
     else
         echo -e "${RED}!! GAGAL memverifikasi Nginx. Konfigurasi lama dipertahankan.${NC}"
-        # PENTING: Jika gagal, konfigurasi lama Nginx (yang terakhir berhasil) tetap aktif.
-        # Namun, kita perlu membalikkan perubahan di file SNI agar sinkron.
         echo -e "${RED}!! Perubahan SNI dibatalkan. Cek log Nginx untuk error sintaks.${NC}"
     fi
 }
@@ -86,19 +83,19 @@ add_sni() {
         echo -e "${RED}!! Input kosong. Proses dibatalkan.${NC}"
         return
     fi
-    # Cek format dasar (tidak mengandung spasi, http, path)
+    # Cek format dasar (tanpa spasi, kapital, http, path)
     if [[ "$NEW_SNI" =~ [[:space:]]|[[:upper:]]|://|/ ]]; then
         echo -e "${RED}!! Format domain tidak valid. Jangan gunakan spasi, huruf kapital, 'http://', atau '/'.${NC}"
         return
     fi
     
-    # Cek duplikat
+    # CEK DUPLIKAT
     if grep -q "^${NEW_SNI}$" "$SNI_LIST_FILE"; then
-        echo -e "${RED}!! Domain $NEW_SNI sudah ada dalam daftar.${NC}"
+        echo -e "${RED}!! Domain sudah terdaftar. Proses dibatalkan.${NC}"
         return
     fi
 
-    # Tambahkan ke file list dan panggil builder
+    # JIKA LOLOS CEK DUPLIKAT (SNI BARU)
     echo "$NEW_SNI" >> "$SNI_LIST_FILE"
     echo -e "${GREEN}>> Domain $NEW_SNI berhasil ditambahkan.${NC}"
     build_nginx_config
@@ -154,13 +151,15 @@ cek_sni() {
         echo -e "Tidak ada domain Onering SNI yang terdaftar. (Status: ${RED}OFF${NC})"
     fi
     echo -e "───────────────────────────"
+    echo -n "Tekan [Enter] untuk kembali..."
+    read
 }
 
 # ========================================================
-# MAIN MENU
+# MAIN MENU LOOP
 # ========================================================
 
-# Nonaktifkan trap saat masuk ke loop utama agar trap hanya berfungsi dalam fungsi
+# Nonaktifkan trap saat masuk ke loop utama
 trap - INT EXIT
 
 while true; do
