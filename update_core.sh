@@ -28,7 +28,7 @@ main_core_update() {
     TEMP_DIR="/tmp"
     
     # KOREKSI KRITIS: Menambahkan seting-onering ke daftar unduhan
-    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "setting-onering")
+    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "setting-onering" "add-tr")
     ALL_SUCCESS=true
     
     echo -e "${YELLOW}>> Mengunduh dan mengganti script utama ke $TARGET_DIR...${NC}"
