@@ -10,145 +10,162 @@
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- Ambil Domain Onering dari file baru ---
+# --- KONFIGURASI UMUM ---
 domain=$(cat /usr/local/etc/v2ray/domain)
-ONERING_SNI=$(cat /usr/local/etc/v2ray/onering_sni 2>/dev/null)
-if [ -z "$ONERING_SNI" ] || [ "$ONERING_SNI" == "N/A (Set me up!)" ]; then
-    ONERING_SNI="$domain"
-fi
+BUG_DOMAIN="bug.com"
+HOST_HEADER="${domain}" 
+VMESS_INBOUND_PORT=4 # Asumsi Port inbound VMESS di config.json
+CONFIG_FILE="/etc/xray/config.json"
+# --------------------------
 
+# Output Warna
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+red() { echo -e "${GREEN}${*}\033[0m"; }
 clear
+
+# --- INPUT VALIDASI USERNAME ---
 until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
 do
-    clear
     echo -e "───────────────────────────"
     echo -e "   Add Xray/Vmess Account  "
     echo -e "───────────────────────────"
-    
+
     read -rp "User: " -e user
-    CLIENT_EXISTS=$(grep -w $user /usr/local/etc/v2ray/config.json | wc -l)
-    
+    # Asumsi tag yang dicari adalah email/tag user
+    CLIENT_EXISTS=$(grep -w $user $CONFIG_FILE | wc -l) 
+
     if [[ ${CLIENT_EXISTS} == '1' ]];
 then
         clear
         echo -e "───────────────────────────"
-        echo -e "   Add Xray/Vmess Account   "
+        echo -e "   Add Xray/Vmess Account  "
         echo ""
-        echo "please choose another name."
+        echo "Nama pengguna sudah terdaftar, silakan pilih nama lain."
         echo ""
         echo -e "───────────────────────────"
     fi
 done
 
-#uuid=$(cat /proc/sys/kernel/random/uuid)
-read -p "Expired (days): " masaaktif
-read -p "Input uuid (Empty Default): " uuid
-if [[ -z "$uuid" ||
-"$uuid" =~ [[:space:]] || ${#uuid} -lt 5 ]]; then
-    uuid=$(cat /proc/sys/kernel/random/uuid)
-    echo "Generated new UUID: $uuid"
+# 1. UUID OTOMATIS GENERATE (TIDAK DITANYA)
+uuid=$(uuidgen)
+echo "Generated new UUID: ${YELLOW}$uuid${NC}"
+
+# 2. INPUT MASA AKTIF & LIMIT IP
+read -p "Expired (days, 0=Permanent): " masaaktif
+read -p "Limit IP (0=Unlimited): " limitip
+
+# Konversi Masa Aktif ke Format Xray (milidetik Unix Epoch Time)
+if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
+    exp_date="Permanent"
+    EXPIRED_MS=0
 else
-    echo "Using provided UUID: $uuid"
+    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d")
+    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000
 fi
-exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
-sed -i '/#vmess$/a\### '"$user $exp"'\
-},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /usr/local/etc/v2ray/config.json
-exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
 
-# --- TEMPLAT LINK VMESS ASLI (MENGGUNAKAN $domain) ---
+# Konversi Limit IP
+if [ -z "$limitip" ]; then
+    LIMIT_IP=0
+else
+    LIMIT_IP=$limitip
+fi
 
-# Link TLS (VMess WS)
-acs=`cat<<EOF
-      {
-      "v": "2", "ps": "${user}-Ori-TLS", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
-      "net": "ws", "path": "/vmess", "type": "none", "host": "${domain}", "tls": "tls", "sni": "${domain}"
+# 3. KONSTRUKSI DAN INSERT CLIENT KE CONFIG.JSON
+NEW_CLIENT_JSON=$(cat << EOF
+          {
+            "id": "${uuid}",
+            "email": "${user}",
+            "limitIp": ${LIMIT_IP},
+            "expired": ${EXPIRED_MS}
+          },
+EOF
+)
+# Logic untuk menyisipkan client baru ke array "clients" di VMESS inbound (Port 4)
+sed -i "/\"port\": ${VMESS_INBOUND_PORT},/ {
+    :a
+    N
+    /\"clients\": \[/ {
+        s/\"clients\": \[/\"clients\": [\n${NEW_CLIENT_JSON}/
+    }
+}" "$CONFIG_FILE"
+
+# 4. RESTART XRAY
+systemctl restart xray
+
+# 5. LINK GENERATION (Koreksi NTLS: Standar DITINGGAL, Onering DIHAPUS)
+
+# --- FUNGSI GENERATE JSON VMESS (Base64) ---
+generate_vmess_link() {
+    local port=$1
+    local tls_status=$2
+    local address=$3
+    local host_header=$4
+    local tag=$5
+    local sni_value=$6
+    local vmess_aid="0" # Asumsi alterId 0
+
+    local json_payload=$(cat << JSON
+{
+  "v": "2",
+  "ps": "${user}-${tag}",
+  "add": "${address}",
+  "port": "${port}",
+  "id": "${uuid}",
+  "aid": "${vmess_aid}",
+  "net": "ws",
+  "type": "none",
+  "host": "${host_header}",
+  "path": "/vmess",
+  "tls": "${tls_status}",
+  "sni": "${sni_value}"
 }
-EOF`
-
-# Link NTLS (VMess WS)
-ask=`cat<<EOF
-      {
-      "v": "2", "ps": "${user}-Ori-NTLS", "add": "${domain}", "port": "80", "id": "${uuid}", "aid": "0",
-      "net": "ws", "path": "/vmess", "type": "none", "host": "${domain}", "tls": "none"
+JSON
+)
+    echo -n "$json_payload" | base64 -w 0
 }
-EOF`
 
-# Link GRPC (VMess GRPC)
-grpc=`cat<<EOF
-      {
-      "v": "2", "ps": "${user}-Ori-GRPC", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
-      "net": "grpc", "path": "vmess-grpc", "type": "none", "host": "${domain}", "tls": "tls", "sni": "${domain}"
-}
-EOF`
+# --- LINK VMESS ASLI (MENGGUNAKAN $domain) ---
+# Link 1: Standar TLS (Port 443, host/sni=domain)
+vmesslink1="vmess://$(generate_vmess_link 443 tls $domain $domain Ori-TLS $domain)"
+# Link 2: Standar NTLS (Port 80, host=domain, tls=none) <-- DIKEMBALIKAN
+vmesslink2="vmess://$(generate_vmess_link 80 none $domain $domain Ori-NTLS none)"
 
-# --- TEMPLAT LINK VMESS ONERING (MENGGUNAKAN $ONERING_SNI) ---
+# --- LINK VMESS ONERING (MENGGUNAKAN BUG_DOMAIN) ---
+# Link Onering TLS (Port 443, address=bug.com, host=domain, sni=onering:domain:bug.com)
+ONERING_SNI_VALUE="onering:${HOST_HEADER}:${BUG_DOMAIN}"
+vmesslink_onering_tls="vmess://$(generate_vmess_link 443 tls $BUG_DOMAIN $HOST_HEADER Onering-TLS $ONERING_SNI_VALUE)"
 
-# Link TLS Onering
-acs_onering=`cat<<EOF
-      {
-      "v": "2", "ps": "${user}-Onering-TLS", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
-      "net": "ws", "path": "/vmess", "type": "none", "host": "${ONERING_SNI}", "tls": "tls", "sni": "${ONERING_SNI}"
-}
-EOF`
+# Link Onering NTLS (Port 80) DIHAPUS
 
-# Link NTLS Onering
-ask_onering=`cat<<EOF
-      {
-      "v": "2", "ps": "${user}-Onering-NTLS", "add": "${domain}", "port": "80", "id": "${uuid}", "aid": "0",
-      "net": "ws", "path": "/vmess", "type": "none", "host": "${ONERING_SNI}", "tls": "none"
-}
-EOF`
-
-# Link GRPC Onering
-grpc_onering=`cat<<EOF
-      {
-      "v": "2", "ps": "${user}-Onering-GRPC", "add": "${domain}", "port": "443", "id": "${uuid}", "aid": "0",
-      "net": "grpc", "path": "vmess-grpc", "type": "none", "host": "${ONERING_SNI}", "tls": "tls", "sni": "${ONERING_SNI}"
-}
-EOF`
-
-# --- ENCODING LINK ---
-vmesslink1="vmess://$(echo $acs | base64 -w 0)"
-vmesslink2="vmess://$(echo $ask | base64 -w 0)"
-vmesslink3="vmess://$(echo $grpc | base64 -w 0)"
-
-vmesslink_onering_tls="vmess://$(echo $acs_onering | base64 -w 0)"
-vmesslink_onering_ntls="vmess://$(echo $ask_onering | base64 -w 0)"
-vmesslink_onering_grpc="vmess://$(echo $grpc_onering | base64 -w 0)"
-
-systemctl restart v2ray
-
+# 6. OUTPUT TELEGRAM
 TEKS=$(cat <<EOF
 <b>───────────────────</b>
    VMESS ACCOUNT   
 <b>───────────────────</b>
 <b>Remarks     : </b><code>${user}</code>
 <b>Domain      : </b><code>${domain}</code>
-<b>Port Tls    : </b><code>443</code>
-<b>Port Ntls   : </b><code>80, 2082</code>
-<b>ID          : </b><code>${uuid}</code>
-<b>Encryption  : </b><code>none</code>
-<b>Path        : </b><code>/whatever, /multipath</code>
-<b>ServiceName : </b><code>vmess-grpc</code>
-<b>SNI Host    : </b><code>${ONERING_SNI}</code> <font color="#00ff00">(Onering Payload)</font>
+<b>Server Addr : </b><code>${BUG_DOMAIN}</code> (Onering)
+<b>Port Tls/NTLS:</b><code>443 / 80</code>
+<b>UUID/ID     : </b><code>${uuid}</code>
+<b>Path        : </b><code>/vmess</code>
+<b>SNI Host    : </b><code>${HOST_HEADER}</code> <font color="#00ff00">(Original Host)</font>
 <b>───────────────────</b>
 <b>1. Link Standar (SNI/Host: ${domain})</b>
 <b>Link TLS    :</b>
 <pre>${vmesslink1}</pre>
 <b>Link NTLS   :</b>
 <pre>${vmesslink2}</pre>
-<b>Link GRPC   :</b>
-<pre>${vmesslink3}</pre>
 <b>───────────────────</b>
-<b>2. Link Onering (SNI/Host: ${ONERING_SNI})</b>
+<b>2. Link Onering (SNI/Host: bug.com)</b>
 <b>Link TLS Onering :</b>
 <pre>${vmesslink_onering_tls}</pre>
-<b>Link NTLS Onering :</b>
-<pre>${vmesslink_onering_ntls}</pre>
-<b>Link GRPC Onering :</b>
-<pre>${vmesslink_onering_grpc}</pre>
 <b>───────────────────</b>
-<b>Expired On : </b><code>$exp</code>
+<b>Limit IP    : </b><code>${LIMIT_IP}</code>
+<b>Expired On  : </b><code>$exp_date</code>
 <b>───────────────────</b>
 EOF
 )
@@ -158,30 +175,27 @@ curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
     -d "parse_mode=HTML" \
     --data-urlencode "text=$TEKS" > /dev/null
 
+# 7. OUTPUT TERMINAL
 clear
 echo -e "───────────────────"
 echo -e "   VMESS ACCOUNT   "
 echo -e "───────────────────"
 echo -e "Remarks     : ${user}" 
 echo -e "Domain      : ${domain}" 
-echo -e "Port Tls    : 443" 
-echo -e "Port Ntls   : 80, 2082" 
-echo -e "ID          : ${uuid}"
-echo -e "Encryption  : none" 
-echo -e "Path        : /whatever, /multipath"
-echo -e "ServiceName : vmess-grpc"
-echo -e "SNI Payload : ${ONERING_SNI}"
+echo -e "Server Addr : ${BUG_DOMAIN} (Onering)"
+echo -e "Port Tls/NTLS: 443 / 80" 
+echo -e "UUID/ID     : ${uuid}"
+echo -e "Path        : /vmess"
+echo -e "SNI Host    : ${HOST_HEADER}"
 echo -e "───────────────────"
 echo -e "1. Link Standar (SNI/Host: ${domain})"
-echo -e "Link TLS    : ${vmesslink1}" 
-echo -e "Link NTLS   : ${vmesslink2}" 
-echo -e "Link GRPC   : ${vmesslink3}" 
+echo -e "Link TLS    : ${vmesslink1}"
+echo -e "Link NTLS   : ${vmesslink2}"
 echo -e "───────────────────"
-echo -e "2. Link Onering (SNI/Host: ${ONERING_SNI})"
-echo -e "Link TLS Onering: ${vmesslink_onering_tls}" 
-echo -e "Link NTLS Onering: ${vmesslink_onering_ntls}" 
-echo -e "Link GRPC Onering: ${vmesslink_onering_grpc}" 
+echo -e "2. Link Onering (SNI/Host: ${BUG_DOMAIN})"
+echo -e "Link TLS Onering: ${vmesslink_onering_tls}"
 echo -e "───────────────────"
-echo -e "Expired On : $exp" 
+echo -e "Limit IP    : ${LIMIT_IP}"
+echo -e "Expired On  : $exp_date"
 echo -e "───────────────────"
 echo ""
