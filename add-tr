@@ -10,14 +10,15 @@
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- KONFIGURASI UMUM ---
+# --- KONFIGURASI UMUM DARI LINGKUNGAN ASLI ---
+CONFIG_FILE="/usr/local/etc/v2ray/config.json" # <--- PATH DIKOREKSI
 domain=$(cat /usr/local/etc/v2ray/domain)
+
+# Variabel Baru
 BUG_DOMAIN="bug.com"
 HOST_HEADER="${domain}" 
 TROJAN_WS_PORT=5      # Port Trojan WS di config.json
 TROJAN_GRPC_PORT=9    # Port Trojan gRPC di config.json
-CONFIG_FILE="/etc/xray/config.json"
-# --------------------------
 
 # Output Warna
 RED='\033[0;31m'
@@ -29,14 +30,13 @@ red() { echo -e "${GREEN}${*}\033[0m"; }
 clear
 
 # --- INPUT VALIDASI USERNAME ---
-until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
+until [[ $user =~ ^[a-zA-Z0-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
 do
     echo -e "───────────────────────────"
     echo -e "   Add Xray/Trojan Account  "
     echo -e "───────────────────────────"
 
     read -rp "User: " -e user
-    # Asumsi tag yang dicari adalah email/tag user
     CLIENT_EXISTS=$(grep -w $user $CONFIG_FILE | wc -l) 
 
     if [[ ${CLIENT_EXISTS} == '1' ]];
@@ -51,21 +51,21 @@ then
     fi
 done
 
-# 1. PASSWORD OTOMATIS GENERATE (TIDAK DITANYA)
-password=$(uuidgen)
-echo "Generated new Password: ${YELLOW}$password${NC}"
+# 1. PASSWORD OTOMATIS GENERATE
+password=$(cat /proc/sys/kernel/random/uuid)
+echo -e "Generated new Password: ${YELLOW}$password${NC}"
 
 # 2. INPUT MASA AKTIF & LIMIT IP
 read -p "Expired (days, 0=Permanent): " masaaktif
 read -p "Limit IP (0=Unlimited): " limitip
 
-# Konversi Masa Aktif ke Format Xray (milidetik Unix Epoch Time)
+# Logika Masa Aktif yang Diinginkan Pengguna (Display)
 if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
     exp_date="Permanent"
     EXPIRED_MS=0
 else
-    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d")
-    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000
+    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d") # Logika Display Asli
+    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000 # Logika Xray (ms)
 fi
 
 # Konversi Limit IP
@@ -107,7 +107,7 @@ sed -i "/\"port\": ${TROJAN_GRPC_PORT},/ {
 # 4. RESTART XRAY
 systemctl restart xray
 
-# 5. LINK GENERATION (Standar dan Onering Baru)
+# 5. LINK GENERATION
 ONERING_SNI_VALUE="onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}"
 
 # --- LINK TROJAN ASLI (MENGGUNAKAN $domain) ---
