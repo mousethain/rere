@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ========================================================
+# Script: Limit IP Xray (Final - Block 1 Minute)
+# Fungsi: Membatasi koneksi aktif. Jika melanggar, akun di-remove 
+#         via API selama 1 menit, lalu dikembalikan.
+# ========================================================
+
+# --- KONSTANTA ---
+API_SERVER="127.0.0.1:10085"
+CONFIG_FILE="/usr/local/etc/v2ray/config.json"
+LOG_FILE="/var/log/v2ray/access.log"
+# File Banned. Format: user_email;protocol;handler_tag;uuid_or_pass;unban_timestamp
+BANNED_FILE="/tmp/xray_limit_banned.txt" 
+TELEGRAM_KEY=$(cat /usr/local/etc/v2ray/bot.key 2>/dev/null)
+TELEGRAM_CHATID=$(cat /usr/local/etc/v2ray/client.id 2>/dev/null)
+PENALTY_DURATION=60 # Durasi blokir (dalam detik, 60 detik = 1 menit)
+
+# Buat file BANNED_FILE jika belum ada
+[[ ! -f "$BANNED_FILE" ]] && touch "$BANNED_FILE"
+
+# --- FUNGSI HELPER ---
+get_handler_tag() {
+    local protocol=$1
+    local tag=""
+    # Berdasarkan array index inbounds di config.json Anda:
+    if [[ "$protocol" == "vmess" ]]; then tag="inbound-1"; fi
+    if [[ "$protocol" == "vless" ]]; then tag="inbound-2"; fi
+    if [[ "$protocol" == "trojan" ]]; then tag="inbound-3"; fi
+    echo "$tag"
+}
+
+send_telegram() {
+    local message="$1"
+    if [[ -n "$TELEGRAM_KEY" && -n "$TELEGRAM_CHATID" ]]; then
+        curl -s --max-time 5 -d "chat_id=$TELEGRAM_CHATID&text=$message" "https://api.telegram.org/bot$TELEGRAM_KEY/sendMessage" > /dev/null
+    fi
+}
+
+# --- FUNGSI UTAMA: Pengecekan dan Blokir ---
+check_and_block() {
+    echo "$(date +%T) [LIMIT] Memulai Pengecekan Limit IP..."
+    local CURRENT_TIME=$(date +%s)
+
+    # 1. LOOP UNTUK DETEKSI PELANGGARAN & PENALTI
+    grep -E '^(###|#&|#!)' "$CONFIG_FILE" | while read -r line; do
+        tag=$(echo "$line" | awk '{print $1}')
+        user_email=$(echo "$line" | awk '{print $2}')
+        limit_val=$(echo "$line" | awk '{print $4}')
+
+        # Cek apakah user sudah di-banned
+        if grep -q "^$user_email;" "$BANNED_FILE"; then
+            continue
+        fi
+
+        if [[ -z "$limit_val" || "$limit_val" -eq 0 ]]; then
+            continue
+        fi
+
+        # Tentukan protokol dan UUID/Password
+        local protocol=""
+        local id_or_pass=""
+        # Menggunakan format penyimpanan: ### user_email exp limitip
+        if [[ "$tag" == "###" ]]; then protocol="vmess"; id_or_pass=$(grep -A 2 "$user_email" "$CONFIG_FILE" | grep -oE '"id":\s*".*?"' | cut -d '"' -f 4); fi
+        if [[ "$tag" == "#&" ]]; then protocol="vless"; id_or_pass=$(grep -A 2 "$user_email" "$CONFIG_FILE" | grep -oE '"id":\s*".*?"' | cut -d '"' -f 4); fi
+        if [[ "$tag" == "#!" ]]; then protocol="trojan"; id_or_pass=$(grep -A 2 "$user_email" "$CONFIG_FILE" | grep -oE '"password":\s*".*?"' | cut -d '"' -f 4); fi
+        
+        if [[ -z "$id_or_pass" ]]; then continue; fi
+        handler_tag=$(get_handler_tag "$protocol")
+
+        # Hitung jumlah IP unik
+        IP_COUNT=$(grep "$id_or_pass" "$LOG_FILE" | grep -v "api" | awk '{print $NF}' | cut -d ':' -f 1 | sort | uniq | wc -l)
+
+        if [[ "$IP_COUNT" -gt "$limit_val" ]]; then
+            
+            # --- Terapkan Blokir ---
+            UNBAN_TIME=$((CURRENT_TIME + PENALTY_DURATION))
+            echo "$(date +%T) [LIMIT] PELANGGARAN! $user_email ($IP_COUNT/$limit_val). Diblokir 1 menit."
+            
+            # 1. Hapus Klien via API (Blokir Total)
+            local remove_client_request='{"tag": "'"$handler_tag"'", "email": "'"$user_email"'"}'
+            v2ctl api --server=$API_SERVER HandlerService.RemoveClient "$remove_client_request" > /dev/null 2>&1
+
+            # 2. Catat ke file Banned
+            echo "$user_email;$protocol;$handler_tag;$id_or_pass;$UNBAN_TIME" >> "$BANNED_FILE"
+
+            send_telegram "❌ Akun XRAY Diblokir Sementara (Limit IP) ❌
+Protokol: $protocol
+Username: $user_email
+Limit: $limit_val IP
+Pelanggaran: Terdeteksi $IP_COUNT IP
+Penanganan: Koneksi diblokir total selama 1 menit."
+        fi
+    done
+}
+
+
+# --- FUNGSI UNTUK MEMBUKA BLOKIR ---
+unblock_client() {
+    echo "$(date +%T) [UNBAN] Memulai Pengecekan Blokir..."
+    local CURRENT_TIME=$(date +%s)
+    local TEMP_FILE=$(mktemp)
+
+    while IFS=';' read -r user_email protocol handler_tag id_or_pass unban_time; do
+        
+        if [[ "$CURRENT_TIME" -ge "$unban_time" ]]; then
+            # --- 1. Tambah Klien Kembali ---
+            echo "$(date +%T) [UNBAN] Membuka blokir untuk: $user_email"
+
+            local client_json=""
+            if [[ "$protocol" == "vmess" || "$protocol" == "vless" ]]; then
+                client_json='{"id": "'"$id_or_pass"'", "email": "'"$user_email"'", "level": 0, "alterId": 0}'
+            elif [[ "$protocol" == "trojan" ]]; then
+                client_json='{"password": "'"$id_or_pass"'", "email": "'"$user_email"'", "level": 0}'
+            fi
+            
+            local add_client_request='{"tag": "'"$handler_tag"'", "client": '$client_json'}'
+            v2ctl api --server=$API_SERVER HandlerService.AddClient "$add_client_request" > /dev/null 2>&1
+            
+            send_telegram "✅ Akun XRAY Dibuka Blokir ✅
+Username: $user_email
+Akun telah diaktifkan kembali setelah masa penalti 1 menit."
+
+        else
+            # Belum waktunya buka blokir, pindahkan ke file sementara
+            echo "$user_email;$protocol;$handler_tag;$id_or_pass;$unban_time" >> "$TEMP_FILE"
+        fi
+    done < "$BANNED_FILE"
+    
+    # Ganti file Banned dengan isi file sementara (menghapus yang sudah di-unban)
+    mv "$TEMP_FILE" "$BANNED_FILE"
+}
+
+# --- MAIN EXECUTION ---
+unblock_client  # Cek dan buka blokir yang sudah lewat masanya
+check_and_block # Cek pelanggaran dan terapkan blokir baru
