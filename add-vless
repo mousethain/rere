@@ -10,15 +10,24 @@
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- Ambil Domain Onering dari file baru ---
+# --- KONFIGURASI UMUM ---
 domain=$(cat /usr/local/etc/v2ray/domain)
-ONERING_SNI=$(cat /usr/local/etc/v2ray/onering_sni 2>/dev/null)
-if [ -z "$ONERING_SNI" ] || [ "$ONERING_SNI" == "N/A (Set me up!)" ]; then
-    ONERING_SNI="$domain"
-fi
+BUG_DOMAIN="bug.com"
+HOST_HEADER="${domain}" 
+VLESS_INBOUND_PORT=2 # Port inbound VLESS di config.json
+CONFIG_FILE="/etc/xray/config.json"
+# --------------------------
 
-red() { echo -e "\033[32;1m${*}\033[0m"; }
+# Output Warna
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+red() { echo -e "${GREEN}${*}\033[0m"; }
 clear
+
+# --- INPUT VALIDASI USERNAME ---
 until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
 do
     echo -e "───────────────────────────"
@@ -26,7 +35,7 @@ do
     echo -e "───────────────────────────"
 
     read -rp "User: " -e user
-    CLIENT_EXISTS=$(grep -w $user /usr/local/etc/v2ray/config.json | wc -l)
+    CLIENT_EXISTS=$(grep -w $user $CONFIG_FILE | wc -l) 
 
     if [[ ${CLIENT_EXISTS} == '1' ]];
 then
@@ -34,68 +43,100 @@ then
         echo -e "───────────────────────────"
         echo -e "   Add Xray/Vless Account  "
         echo ""
-        echo "please choose another name."
+        echo "Nama pengguna sudah terdaftar, silakan pilih nama lain."
         echo ""
         echo -e "───────────────────────────"
     fi
 done
-#uuid=$(cat /proc/sys/kernel/random/uuid)
-read -p "Expired (days): " masaaktif
-read -p "Input uuid (Empty Default): " uuid
-if [[ -z "$uuid" ||
-"$uuid" =~ [[:space:]] || ${#uuid} -lt 5 ]]; then
-    uuid=$(cat /proc/sys/kernel/random/uuid)
-    echo "Generated new UUID: $uuid"
+
+# 1. UUID OTOMATIS GENERATE (TIDAK DITANYA)
+uuid=$(uuidgen)
+echo "Generated new UUID: ${YELLOW}$uuid${NC}"
+
+# 2. INPUT MASA AKTIF & LIMIT IP
+read -p "Expired (days, 0=Permanent): " masaaktif
+read -p "Limit IP (0=Unlimited): " limitip
+
+# Konversi Masa Aktif ke Format Xray (milidetik Unix Epoch Time)
+if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
+    exp_date="Permanent"
+    EXPIRED_MS=0
 else
-    echo "Using provided UUID: $uuid"
+    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d")
+    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000
 fi
-exp=$(date -d "$masaaktif days" +"%Y-%m-%d")
-sed -i '/#vless$/a\#& '"$user $exp"'\
-},{"id": "'""$uuid""'","email": "'""$user""'"' /usr/local/etc/v2ray/config.json
-systemctl restart v2ray
+
+# Konversi Limit IP
+if [ -z "$limitip" ]; then
+    LIMIT_IP=0
+else
+    LIMIT_IP=$limitip
+fi
+
+# 3. KONSTRUKSI DAN INSERT CLIENT KE CONFIG.JSON
+NEW_CLIENT_JSON=$(cat << EOF
+          {
+            "id": "${uuid}",
+            "email": "${user}",
+            "limitIp": ${LIMIT_IP},
+            "expired": ${EXPIRED_MS}
+          },
+EOF
+)
+# Logic untuk menyisipkan client baru ke array "clients" di VLESS inbound (Port 2)
+sed -i "/\"port\": ${VLESS_INBOUND_PORT},/ {
+    :a
+    N
+    /\"clients\": \[/ {
+        s/\"clients\": \[/\"clients\": [\n${NEW_CLIENT_JSON}/
+    }
+}" "$CONFIG_FILE"
+
+# 4. RESTART XRAY
+systemctl restart xray
+
+# 5. LINK GENERATION (Koreksi NTLS: Standar DITINGGAL, Onering DIHAPUS)
 
 # --- LINK VLESS ASLI (MENGGUNAKAN $domain) ---
 vlesslink1="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${domain}&sni=${domain}#${user}-Ori-TLS"
-vlesslink2="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${domain}#${user}-Ori-NTLS"
+vlesslink2="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${domain}#${user}-Ori-NTLS" # <-- DIKEMBALIKAN
 vlesslink3="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${domain}#${user}-Ori-GRPC"
 
-# --- LINK VLESS ONERING (MENGGUNAKAN $ONERING_SNI) ---
-vlesslink_onering_tls="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${ONERING_SNI}&sni=${ONERING_SNI}#${user}-Onering-TLS"
-vlesslink_onering_ntls="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${ONERING_SNI}#${user}-Onering-NTLS"
-vlesslink_onering_grpc="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${ONERING_SNI}#${user}-Onering-GRPC"
+# --- LINK VLESS ONERING (MENGGUNAKAN BUG_DOMAIN) ---
+vlesslink_onering_tls="vless://${uuid}@${BUG_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&host=${HOST_HEADER}&type=ws&sni=onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}#${user}-Onering-TLS"
+vlesslink_onering_grpc="vless://${uuid}@${BUG_DOMAIN}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&host=${HOST_HEADER}&sni=onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}#${user}-Onering-GRPC"
+# vlesslink_onering_ntls telah dihapus
 
-# --- AKHIR MODIFIKASI LINK ---
-
+# 6. OUTPUT TELEGRAM
 TEKS=$(cat <<EOF
 <b>───────────────────</b>
    VLESS ACCOUNT   
 <b>───────────────────</b>
 <b>Remarks     : </b><code>${user}</code>
 <b>Domain      : </b><code>${domain}</code>
-<b>Port Tls    : </b><code>443</code>
-<b>Port Ntls   : </b><code>80, 2082</code>
+<b>Server Addr : </b><code>${BUG_DOMAIN}</code> (Onering)
+<b>Port Tls/NTLS:</b><code>443 / 80</code>
 <b>UUID/ID     : </b><code>${uuid}</code>
 <b>Path        : </b><code>/vless</code>
 <b>ServiceName : </b><code>vless-grpc</code>
-<b>SNI Host    : </b><code>${ONERING_SNI}</code> <font color="#00ff00">(Onering Payload)</font>
+<b>SNI Host    : </b><code>${HOST_HEADER}</code> <font color="#00ff00">(Original Host)</font>
 <b>───────────────────</b>
 <b>1. Link Standar (SNI/Host: ${domain})</b>
 <b>Link TLS    :</b>
 <pre>${vlesslink1}</pre>
-<b>Link NTLS  :</b>
+<b>Link NTLS   :</b>
 <pre>${vlesslink2}</pre>
 <b>Link GRPC   :</b>
 <pre>${vlesslink3}</pre>
 <b>───────────────────</b>
-<b>2. Link Onering (SNI/Host: ${ONERING_SNI})</b>
+<b>2. Link Onering (SNI/Host: bug.com)</b>
 <b>Link TLS Onering :</b>
 <pre>${vlesslink_onering_tls}</pre>
-<b>Link NTLS Onering :</b>
-<pre>${vlesslink_onering_ntls}</pre>
 <b>Link GRPC Onering :</b>
 <pre>${vlesslink_onering_grpc}</pre>
 <b>───────────────────</b>
-<b>Expired On  : </b><code>$exp</code>
+<b>Limit IP    : </b><code>${LIMIT_IP}</code>
+<b>Expired On  : </b><code>$exp_date</code>
 <b>───────────────────</b>
 EOF
 )
@@ -105,29 +146,30 @@ curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
     -d "parse_mode=HTML" \
     --data-urlencode "text=$TEKS" > /dev/null
 
+# 7. OUTPUT TERMINAL
 clear
 echo -e "───────────────────"
 echo -e "   VLESS ACCOUNT   "
 echo -e "───────────────────"
 echo -e "Remarks     : ${user}" 
 echo -e "Domain      : ${domain}" 
-echo -e "Port Tls    : 443" 
-echo -e "Port Ntls   : 80, 2082" 
+echo -e "Server Addr : ${BUG_DOMAIN} (Onering)"
+echo -e "Port Tls/NTLS: 443 / 80" 
 echo -e "UUID/ID     : ${uuid}"
 echo -e "Path        : /vless"
 echo -e "ServiceName : vless-grpc"
-echo -e "SNI Payload : ${ONERING_SNI}"
+echo -e "SNI Host    : ${HOST_HEADER}"
 echo -e "───────────────────"
 echo -e "1. Link Standar (SNI/Host: ${domain})"
 echo -e "Link TLS    : ${vlesslink1}"
-echo -e "Link NTLS   : ${vlesslink2}"
+echo -e "Link NTLS   : ${vlesslink2}" # <-- DIKEMBALIKAN
 echo -e "Link GRPC   : ${vlesslink3}"
 echo -e "───────────────────"
-echo -e "2. Link Onering (SNI/Host: ${ONERING_SNI})"
+echo -e "2. Link Onering (SNI/Host: ${BUG_DOMAIN})"
 echo -e "Link TLS Onering: ${vlesslink_onering_tls}"
-echo -e "Link NTLS Onering: ${vlesslink_onering_ntls}"
 echo -e "Link GRPC Onering: ${vlesslink_onering_grpc}"
 echo -e "───────────────────"
-echo -e "Expired On  : $exp"
+echo -e "Limit IP    : ${LIMIT_IP}"
+echo -e "Expired On  : $exp_date"
 echo -e "───────────────────"
 echo ""
