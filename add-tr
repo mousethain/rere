@@ -1,49 +1,31 @@
 #!/usr/bin/env bash
 # ========================================================
 # Credit Code By mousevpn
-# Author: mousevpn
-# License: This configuration is licensed for personal or internal use only.
-#          Redistribution, resale, or reuse of this code in any form
-#          without explicit written permission from the author is prohibited.
-#          Selling this code or its derivatives is strictly forbidden.
 # ========================================================
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- KONFIGURASI UMUM DARI LINGKUNGAN ASLI ---
-CONFIG_FILE="/usr/local/etc/v2ray/config.json" # <--- PATH DIKOREKSI
 domain=$(cat /usr/local/etc/v2ray/domain)
-
-# Variabel Baru
+CONFIG_FILE="/usr/local/etc/v2ray/config.json"
+# Variabel untuk Onering
 BUG_DOMAIN="bug.com"
-HOST_HEADER="${domain}" 
-TROJAN_WS_PORT=5      # Port Trojan WS di config.json
-TROJAN_GRPC_PORT=9    # Port Trojan gRPC di config.json
+ONERING_SNI="onering:${domain}:${BUG_DOMAIN}"
 
-# Output Warna
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m'
-
-red() { echo -e "${GREEN}${*}\033[0m"; }
+red() { echo -e "\033[32;1m${*}\033[0m"; }
 clear
 
-# --- INPUT VALIDASI USERNAME ---
-until [[ $user =~ ^[a-zA-Z0-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
-do
+# --- Input Username ---
+until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${user_EXISTS} == '0' ]]; do
     echo -e "───────────────────────────"
-    echo -e "   Add Xray/Trojan Account  "
+    echo -e "  Add Xray/Trojan Account  "
     echo -e "───────────────────────────"
-
     read -rp "User: " -e user
-    CLIENT_EXISTS=$(grep -w $user $CONFIG_FILE | wc -l) 
+    user_EXISTS=$(grep -w $user "$CONFIG_FILE" | wc -l)
 
-    if [[ ${CLIENT_EXISTS} == '1' ]];
-then
+    if [[ ${user_EXISTS} == '1' ]]; then
         clear
         echo -e "───────────────────────────"
-        echo -e "   Add Xray/Trojan Account  "
+        echo -e "  Add Xray/Trojan Account  "
         echo ""
         echo "Nama pengguna sudah terdaftar, silakan pilih nama lain."
         echo ""
@@ -51,101 +33,65 @@ then
     fi
 done
 
-# 1. PASSWORD OTOMATIS GENERATE
+# --- Password Otomatis ---
 password=$(cat /proc/sys/kernel/random/uuid)
-echo -e "Generated new Password: ${YELLOW}$password${NC}"
 
-# 2. INPUT MASA AKTIF & LIMIT IP
-read -p "Expired (days, 0=Permanent): " masaaktif
-read -p "Limit IP (0=Unlimited): " limitip
+# --- Input Masa Aktif dan Limit IP ---
+read -p "Expired (days): " masaaktif
+read -rp "Limit IP (1-5, 0=unlimited): " limitip
 
-# Logika Masa Aktif yang Diinginkan Pengguna (Display)
-if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
-    exp_date="Permanent"
-    EXPIRED_MS=0
-else
-    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d") # Logika Display Asli
-    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000 # Logika Xray (ms)
+if ! [[ "$limitip" =~ ^[0-5]$ ]]; then
+    limitip=0
 fi
 
-# Konversi Limit IP
-if [ -z "$limitip" ]; then
-    LIMIT_IP=0
-else
-    LIMIT_IP=$limitip
-fi
+# Hitung Expired
+exp=$(date -d "$masaaktif days" +"%Y-%m-%d")
 
-# 3. KONSTRUKSI DAN INSERT CLIENT KE CONFIG.JSON
-NEW_CLIENT_JSON_TROJAN=$(cat << EOF
-          {
-            "password": "${password}",
-            "email": "${user}",
-            "limitIp": ${LIMIT_IP},
-            "expired": ${EXPIRED_MS}
-          },
-EOF
-)
+# --- Insert ke Config (Format BARU: #! user exp limitip) ---
+sed -i '/#trojan$/a\#! '"$user $exp $limitip"'\
+},{"password": "'""$password""'","email": "'""$user""'"' "$CONFIG_FILE"
 
-# Insert ke Port 5 (Trojan WS)
-sed -i "/\"port\": ${TROJAN_WS_PORT},/ {
-    :a
-    N
-    /\"clients\": \[/ {
-        s/\"clients\": \[/\"clients\": [\n${NEW_CLIENT_JSON_TROJAN}/
-    }
-}" "$CONFIG_FILE"
+# Restart Service
+systemctl restart v2ray
 
-# Insert ke Port 9 (Trojan gRPC)
-sed -i "/\"port\": ${TROJAN_GRPC_PORT},/ {
-    :a
-    N
-    /\"clients\": \[/ {
-        s/\"clients\": \[/\"clients\": [\n${NEW_CLIENT_JSON_TROJAN}/
-    }
-}" "$CONFIG_FILE"
+# --- GENERATE LINK (LENGKAP) ---
 
-# 4. RESTART XRAY
-systemctl restart xray
+# Path WS disesuaikan dengan konfigurasi Nginx/Config
+trojanlink="trojan://${password}@${domain}:443?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#${user}-Ori-WS"
+trojanlink1="trojan://${password}@${domain}:443?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&sni=${domain}#${user}-Ori-GRPC"
 
-# 5. LINK GENERATION
-ONERING_SNI_VALUE="onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}"
+# 2. Link Onering (Modifikasi: bug.com)
+trojanlink_onering_ws="trojan://${password}@${BUG_DOMAIN}:443?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${ONERING_SNI}#${user}-Onering-WS"
+trojanlink_onering_grpc="trojan://${password}@${BUG_DOMAIN}:443?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&host=${domain}&sni=${ONERING_SNI}#${user}-Onering-GRPC"
 
-# --- LINK TROJAN ASLI (MENGGUNAKAN $domain) ---
-trojanlink_ori_ws="trojan://${password}@${domain}:443?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#${user}-Ori-WS"
-trojanlink_ori_grpc="trojan://${password}@${domain}:443?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&sni=${domain}#${user}-Ori-GRPC"
-
-# --- LINK TROJAN ONERING (MENGGUNAKAN BUG_DOMAIN) ---
-trojanlink_onering_ws="trojan://${password}@${BUG_DOMAIN}:443?path=%2Ftrojan-ws&security=tls&host=${HOST_HEADER}&type=ws&sni=${ONERING_SNI_VALUE}#${user}-Onering-WS"
-trojanlink_onering_grpc="trojan://${password}@${BUG_DOMAIN}:443?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&host=${HOST_HEADER}&sni=${ONERING_SNI_VALUE}#${user}-Onering-GRPC"
-
-# 6. OUTPUT TELEGRAM
+# --- OUTPUT TELEGRAM ---
 TEKS=$(cat <<EOF
 <b>───────────────────</b>
   TROJAN ACCOUNT
 <b>───────────────────</b>
 <b>Remarks    : </b><code>${user}</code>
 <b>Domain     : </b><code>${domain}</code>
-<b>Server Addr: </b><code>${BUG_DOMAIN}</code> (Onering)
-<b>port       : </b><code>443</code>
+<b>Onering Addr: </b><code>${BUG_DOMAIN}</code>
+<b>Port       : </b><code>443</code>
 <b>Password   : </b><code>${password}</code>
 <b>Path WS    : </b><code>/trojan-ws</code>
 <b>ServiceName: </b><code>trojan-grpc</code>
-<b>SNI Host   : </b><code>${HOST_HEADER}</code> <font color="#00ff00">(Original Host)</font>
+<b>SNI Onering: </b><code>${ONERING_SNI}</code>
+<b>Limit IP   : </b><code>${limitip}</code>
 <b>───────────────────</b>
-<b>1. Link Standar (SNI/Host: ${domain})</b>
-<b>Link WS    :</b>
-<pre>${trojanlink_ori_ws}</pre>
-<b>Link GRPC  :</b>
-<pre>${trojanlink_ori_grpc}</pre>
+<b>1. Link Standar</b>
+<b>Link WS   :</b>
+<pre>${trojanlink}</pre>
+<b>Link GRPC :</b>
+<pre>${trojanlink1}</pre>
 <b>───────────────────</b>
-<b>2. Link Onering (SNI/Host: bug.com)</b>
+<b>2. Link Onering</b>
 <b>Link WS Onering:</b>
 <pre>${trojanlink_onering_ws}</pre>
 <b>Link GRPC Onering:</b>
 <pre>${trojanlink_onering_grpc}</pre>
 <b>───────────────────</b>
-<b>Limit IP   : </b><code>${LIMIT_IP}</code>
-<b>Expired On : </b><code>$exp_date</code>
+<b>Expired On : </b><code>$exp</code>
 <b>───────────────────</b>
 EOF
 )
@@ -155,29 +101,29 @@ curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
     -d "parse_mode=HTML" \
     --data-urlencode "text=$TEKS" > /dev/null
 
-# 7. OUTPUT TERMINAL
+# --- OUTPUT TERMINAL ---
 clear
 echo -e "───────────────────"
 echo -e "  TROJAN ACCOUNT"
 echo -e "───────────────────"
 echo -e "Remarks    : ${user}"
 echo -e "Domain     : ${domain}"
-echo -e "Server Addr: ${BUG_DOMAIN} (Onering)"
-echo -e "port       : 443"
-echo -e "Password   : $password"
+echo -e "Onering Addr: ${BUG_DOMAIN}"
+echo -e "Port       : 443"
+echo -e "Password   : ${password}"
 echo -e "Path WS    : /trojan-ws"
 echo -e "ServiceName: trojan-grpc"
-echo -e "SNI Host   : ${HOST_HEADER}"
+echo -e "SNI Onering: ${ONERING_SNI}"
+echo -e "Limit IP   : ${limitip}"
 echo -e "───────────────────"
-echo -e "1. Link Standar (SNI/Host: ${domain})"
-echo -e "Link WS   : ${trojanlink_ori_ws}"
-echo -e "Link GRPC : ${trojanlink_ori_grpc}"
+echo -e "1. Link Standar"
+echo -e "Link WS   : ${trojanlink}"
+echo -e "Link GRPC : ${trojanlink1}"
 echo -e "───────────────────"
-echo -e "2. Link Onering (SNI/Host: ${BUG_DOMAIN})"
-echo -e "Link WS Onering: ${trojanlink_onering_ws}"
-echo -e "Link GRPC Onering: ${trojanlink_onering_grpc}"
+echo -e "2. Link Onering (Bug.com)"
+echo -e "Link WS   : ${trojanlink_onering_ws}"
+echo -e "Link GRPC : ${trojanlink_onering_grpc}"
 echo -e "───────────────────"
-echo -e "Limit IP   : ${LIMIT_IP}"
-echo -e "Expired On : $exp_date"
+echo -e "Expired On : $exp"
 echo -e "───────────────────"
 echo ""
