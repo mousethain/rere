@@ -1,44 +1,28 @@
 #!/usr/bin/env bash
 # ========================================================
-# Credit Code By mousevpn
-# Author: mousevpn
-# License: This configuration is licensed for personal or internal use only.
-#          Redistribution, resale, or reuse of this code in any form
-#          without explicit written permission from the author is prohibited.
-#          Selling this code or its derivatives is strictly forbidden.
+# Credit Code By Mousevpn
 # ========================================================
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- KONFIGURASI UMUM DARI LINGKUNGAN ASLI ---
-CONFIG_FILE="/usr/local/etc/v2ray/config.json" # <--- PATH DIKOREKSI
 domain=$(cat /usr/local/etc/v2ray/domain)
+CONFIG_FILE="/usr/local/etc/v2ray/config.json"
+# Variabel untuk Onering
 BUG_DOMAIN="bug.com"
-HOST_HEADER="${domain}" 
-VLESS_INBOUND_PORT=2 # Port inbound VLESS di config.json
-# --------------------------
+ONERING_SNI="onering:${domain}:${BUG_DOMAIN}"
 
-# Output Warna
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m'
-
-red() { echo -e "${GREEN}${*}\033[0m"; }
+red() { echo -e "\033[32;1m${*}\033[0m"; }
 clear
 
-# --- INPUT VALIDASI USERNAME ---
-until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
-do
+# --- Input Username ---
+until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]]; do
     echo -e "───────────────────────────"
     echo -e "   Add Xray/Vless Account  "
     echo -e "───────────────────────────"
-
     read -rp "User: " -e user
-    CLIENT_EXISTS=$(grep -w $user $CONFIG_FILE | wc -l) 
+    CLIENT_EXISTS=$(grep -w $user "$CONFIG_FILE" | wc -l)
 
-    if [[ ${CLIENT_EXISTS} == '1' ]];
-then
+    if [[ ${CLIENT_EXISTS} == '1' ]]; then
         clear
         echo -e "───────────────────────────"
         echo -e "   Add Xray/Vless Account  "
@@ -49,93 +33,65 @@ then
     fi
 done
 
-# 1. UUID OTOMATIS GENERATE
+# --- UUID Otomatis ---
 uuid=$(cat /proc/sys/kernel/random/uuid)
-echo -e "Generated new UUID: ${YELLOW}$uuid${NC}"
 
-# 2. INPUT MASA AKTIF & LIMIT IP
-read -p "Expired (days, 0=Permanent): " masaaktif
-read -p "Limit IP (0=Unlimited): " limitip
+# --- Input Masa Aktif dan Limit IP ---
+read -p "Expired (days): " masaaktif
+read -rp "Limit IP (1-5, 0=unlimited): " limitip
 
-# Logika Masa Aktif yang Diinginkan Pengguna (Display)
-if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
-    exp_date="Permanent"
-    EXPIRED_MS=0
-else
-    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d") # Logika Display Asli
-    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000 # Logika Xray (ms)
+# Validasi Limit IP (hanya menerima 0-5)
+if ! [[ "$limitip" =~ ^[0-5]$ ]]; then
+    limitip=0
 fi
 
-# Konversi Limit IP
-if [ -z "$limitip" ]; then
-    LIMIT_IP=0
-else
-    LIMIT_IP=$limitip
-fi
+# Hitung Expired
+exp=$(date -d "$masaaktif days" +"%Y-%m-%d")
 
-# 3. KONSTRUKSI DAN INSERT CLIENT KE CONFIG.JSON
-NEW_CLIENT_JSON=$(cat << EOF
-          {
-            "id": "${uuid}",
-            "email": "${user}",
-            "limitIp": ${LIMIT_IP},
-            "expired": ${EXPIRED_MS}
-          },
-EOF
-)
-# Logic untuk menyisipkan client baru ke array "clients" di VLESS inbound (Port 2)
-sed -i "/\"port\": ${VLESS_INBOUND_PORT},/ {
-    :a
-    N
-    /\"clients\": \[/ {
-        s/\"clients\": \[/\"clients\": [\n${NEW_CLIENT_JSON}/
-    }
-}" "$CONFIG_FILE"
+# --- Insert ke Config (Format BARU: #& user exp limitip) ---
+sed -i '/#vless$/a\#& '"$user $exp $limitip"'\
+},{"id": "'""$uuid""'","email": "'""$user""'"' "$CONFIG_FILE"
 
-# 4. RESTART XRAY
-systemctl restart xray
+# Restart Service
+systemctl restart v2ray
 
-# 5. LINK GENERATION (Standar NTLS DIKEMBALIKAN, Onering NTLS DIHAPUS)
-
-# --- LINK VLESS ASLI (MENGGUNAKAN $domain) ---
+# --- GENERATE LINK (LENGKAP) ---
+# Path disesuaikan dengan konfigurasi Nginx/Xray Anda
 vlesslink1="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${domain}&sni=${domain}#${user}-Ori-TLS"
-vlesslink2="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${domain}#${user}-Ori-NTLS" # <-- DIKEMBALIKAN
+vlesslink2="vless://${uuid}@${domain}:80?path=/vless&encryption=none&type=ws&host=${domain}#${user}-Ori-NTLS"
 vlesslink3="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${domain}#${user}-Ori-GRPC"
+vlesslink_onering_tls="vless://${uuid}@${BUG_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&host=${domain}&type=ws&sni=${ONERING_SNI}#${user}-Onering-TLS"
+vlesslink_onering_grpc="vless://${uuid}@${BUG_DOMAIN}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&host=${domain}&sni=${ONERING_SNI}#${user}-Onering-GRPC"
 
-# --- LINK VLESS ONERING (MENGGUNAKAN BUG_DOMAIN) ---
-vlesslink_onering_tls="vless://${uuid}@${BUG_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&host=${HOST_HEADER}&type=ws&sni=onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}#${user}-Onering-TLS"
-vlesslink_onering_grpc="vless://${uuid}@${BUG_DOMAIN}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&host=${HOST_HEADER}&sni=onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}#${user}-Onering-GRPC"
-
-# 6. OUTPUT TELEGRAM
+# --- OUTPUT TELEGRAM ---
 TEKS=$(cat <<EOF
 <b>───────────────────</b>
    VLESS ACCOUNT   
 <b>───────────────────</b>
 <b>Remarks     : </b><code>${user}</code>
 <b>Domain      : </b><code>${domain}</code>
-<b>Server Addr : </b><code>${BUG_DOMAIN}</code> (Onering)
-<b>Port Tls/NTLS:</b><code>443 / 80</code>
+<b>Onering Addr: </b><code>${BUG_DOMAIN}</code>
+<b>Port Tls    : </b><code>443</code>
 <b>UUID/ID     : </b><code>${uuid}</code>
 <b>Path        : </b><code>/vless</code>
-<b>ServiceName : </b><code>vless-grpc</code>
-<b>SNI Host    : </b><code>${HOST_HEADER}</code> <font color="#00ff00">(Original Host)</font>
+<b>SNI Onering : </b><code>${ONERING_SNI}</code>
+<b>Limit IP    : </b><code>${limitip}</code>
 <b>───────────────────</b>
-<b>1. Link Standar (SNI/Host: ${domain})</b>
+<b>1. Link Standar</b>
 <b>Link TLS    :</b>
 <pre>${vlesslink1}</pre>
-<b>Link NTLS   :</b>
+<b>Link NTLS  :</b>
 <pre>${vlesslink2}</pre>
 <b>Link GRPC   :</b>
 <pre>${vlesslink3}</pre>
 <b>───────────────────</b>
-<b>2. Link Onering (SNI/Host: bug.com)</b>
+<b>2. Link Onering</b>
 <b>Link TLS Onering :</b>
 <pre>${vlesslink_onering_tls}</pre>
 <b>Link GRPC Onering :</b>
 <pre>${vlesslink_onering_grpc}</pre>
 <b>───────────────────</b>
-<b>Limit IP    : </b><code>${LIMIT_IP}</code>
-<b>Expired On  : </b><code>$exp_date</code>
+<b>Expired On  : </b><code>$exp</code>
 <b>───────────────────</b>
 EOF
 )
@@ -145,30 +101,29 @@ curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
     -d "parse_mode=HTML" \
     --data-urlencode "text=$TEKS" > /dev/null
 
-# 7. OUTPUT TERMINAL
+# --- OUTPUT TERMINAL ---
 clear
 echo -e "───────────────────"
 echo -e "   VLESS ACCOUNT   "
 echo -e "───────────────────"
 echo -e "Remarks     : ${user}" 
 echo -e "Domain      : ${domain}" 
-echo -e "Server Addr : ${BUG_DOMAIN} (Onering)"
-echo -e "Port Tls/NTLS: 443 / 80" 
+echo -e "Onering Addr: ${BUG_DOMAIN}"
+echo -e "Port Tls    : 443" 
 echo -e "UUID/ID     : ${uuid}"
 echo -e "Path        : /vless"
-echo -e "ServiceName : vless-grpc"
-echo -e "SNI Host    : ${HOST_HEADER}"
+echo -e "SNI Onering : ${ONERING_SNI}"
+echo -e "Limit IP    : ${limitip}"
 echo -e "───────────────────"
-echo -e "1. Link Standar (SNI/Host: ${domain})"
+echo -e "1. Link Standar"
 echo -e "Link TLS    : ${vlesslink1}"
 echo -e "Link NTLS   : ${vlesslink2}"
 echo -e "Link GRPC   : ${vlesslink3}"
 echo -e "───────────────────"
-echo -e "2. Link Onering (SNI/Host: ${BUG_DOMAIN})"
-echo -e "Link TLS Onering: ${vlesslink_onering_tls}"
-echo -e "Link GRPC Onering: ${vlesslink_onering_grpc}"
+echo -e "2. Link Onering (Bug.com)"
+echo -e "Link TLS    : ${vlesslink_onering_tls}"
+echo -e "Link GRPC   : ${vlesslink_onering_grpc}"
 echo -e "───────────────────"
-echo -e "Limit IP    : ${LIMIT_IP}"
-echo -e "Expired On  : $exp_date"
+echo -e "Expired On  : $exp"
 echo -e "───────────────────"
 echo ""
