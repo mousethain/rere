@@ -10,12 +10,12 @@
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- KONFIGURASI UMUM ---
+# --- KONFIGURASI UMUM DARI LINGKUNGAN ASLI ---
+CONFIG_FILE="/usr/local/etc/v2ray/config.json" # <--- PATH DIKOREKSI
 domain=$(cat /usr/local/etc/v2ray/domain)
 BUG_DOMAIN="bug.com"
 HOST_HEADER="${domain}" 
 VLESS_INBOUND_PORT=2 # Port inbound VLESS di config.json
-CONFIG_FILE="/etc/xray/config.json"
 # --------------------------
 
 # Output Warna
@@ -49,21 +49,21 @@ then
     fi
 done
 
-# 1. UUID OTOMATIS GENERATE (TIDAK DITANYA)
-uuid=$(uuidgen)
-echo "Generated new UUID: ${YELLOW}$uuid${NC}"
+# 1. UUID OTOMATIS GENERATE
+uuid=$(cat /proc/sys/kernel/random/uuid)
+echo -e "Generated new UUID: ${YELLOW}$uuid${NC}"
 
 # 2. INPUT MASA AKTIF & LIMIT IP
 read -p "Expired (days, 0=Permanent): " masaaktif
 read -p "Limit IP (0=Unlimited): " limitip
 
-# Konversi Masa Aktif ke Format Xray (milidetik Unix Epoch Time)
+# Logika Masa Aktif yang Diinginkan Pengguna (Display)
 if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
     exp_date="Permanent"
     EXPIRED_MS=0
 else
-    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d")
-    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000
+    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d") # Logika Display Asli
+    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000 # Logika Xray (ms)
 fi
 
 # Konversi Limit IP
@@ -95,7 +95,7 @@ sed -i "/\"port\": ${VLESS_INBOUND_PORT},/ {
 # 4. RESTART XRAY
 systemctl restart xray
 
-# 5. LINK GENERATION (Koreksi NTLS: Standar DITINGGAL, Onering DIHAPUS)
+# 5. LINK GENERATION (Standar NTLS DIKEMBALIKAN, Onering NTLS DIHAPUS)
 
 # --- LINK VLESS ASLI (MENGGUNAKAN $domain) ---
 vlesslink1="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&type=ws&host=${domain}&sni=${domain}#${user}-Ori-TLS"
@@ -105,7 +105,6 @@ vlesslink3="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&
 # --- LINK VLESS ONERING (MENGGUNAKAN BUG_DOMAIN) ---
 vlesslink_onering_tls="vless://${uuid}@${BUG_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&host=${HOST_HEADER}&type=ws&sni=onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}#${user}-Onering-TLS"
 vlesslink_onering_grpc="vless://${uuid}@${BUG_DOMAIN}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&host=${HOST_HEADER}&sni=onering%3A${HOST_HEADER}%3A${BUG_DOMAIN}#${user}-Onering-GRPC"
-# vlesslink_onering_ntls telah dihapus
 
 # 6. OUTPUT TELEGRAM
 TEKS=$(cat <<EOF
@@ -162,7 +161,7 @@ echo -e "SNI Host    : ${HOST_HEADER}"
 echo -e "───────────────────"
 echo -e "1. Link Standar (SNI/Host: ${domain})"
 echo -e "Link TLS    : ${vlesslink1}"
-echo -e "Link NTLS   : ${vlesslink2}" # <-- DIKEMBALIKAN
+echo -e "Link NTLS   : ${vlesslink2}"
 echo -e "Link GRPC   : ${vlesslink3}"
 echo -e "───────────────────"
 echo -e "2. Link Onering (SNI/Host: ${BUG_DOMAIN})"
