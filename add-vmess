@@ -1,44 +1,28 @@
 #!/usr/bin/env bash
 # ========================================================
 # Credit Code By mousevpn
-# Author: mousevpn
-# License: This configuration is licensed for personal or internal use only.
-#          Redistribution, resale, or reuse of this code in any form
-#          without explicit written permission from the author is prohibited.
-#          Selling this code or its derivatives is strictly forbidden.
 # ========================================================
 telegram_bot_token=$(cat /usr/local/etc/v2ray/bot.key)
 telegram_chatid=$(cat /usr/local/etc/v2ray/client.id)
 
-# --- KONFIGURASI UMUM DARI LINGKUNGAN ASLI ---
-CONFIG_FILE="/usr/local/etc/v2ray/config.json" # <--- PATH DIKOREKSI
 domain=$(cat /usr/local/etc/v2ray/domain)
+CONFIG_FILE="/usr/local/etc/v2ray/config.json"
+# Variabel untuk Onering
 BUG_DOMAIN="bug.com"
-HOST_HEADER="${domain}" 
-VMESS_INBOUND_PORT=4 # Port inbound VMESS di config.json
-# --------------------------
+ONERING_SNI="onering:${domain}:${BUG_DOMAIN}"
 
-# Output Warna
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m'
-
-red() { echo -e "${GREEN}${*}\033[0m"; }
+red() { echo -e "\033[32;1m${*}\033[0m"; }
 clear
 
-# --- INPUT VALIDASI USERNAME ---
-until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]];
-do
+# --- Input Username ---
+until [[ $user =~ ^[a-zA-Z0-9_]+$ && ${CLIENT_EXISTS} == '0' ]]; do
     echo -e "───────────────────────────"
     echo -e "   Add Xray/Vmess Account  "
     echo -e "───────────────────────────"
-
     read -rp "User: " -e user
-    CLIENT_EXISTS=$(grep -w $user $CONFIG_FILE | wc -l) 
+    CLIENT_EXISTS=$(grep -w $user "$CONFIG_FILE" | wc -l)
 
-    if [[ ${CLIENT_EXISTS} == '1' ]];
-then
+    if [[ ${CLIENT_EXISTS} == '1' ]]; then
         clear
         echo -e "───────────────────────────"
         echo -e "   Add Xray/Vmess Account  "
@@ -49,118 +33,96 @@ then
     fi
 done
 
-# 1. UUID OTOMATIS GENERATE
+# --- UUID Otomatis ---
 uuid=$(cat /proc/sys/kernel/random/uuid)
-echo -e "Generated new UUID: ${YELLOW}$uuid${NC}"
 
-# 2. INPUT MASA AKTIF & LIMIT IP
-read -p "Expired (days, 0=Permanent): " masaaktif
-read -p "Limit IP (0=Unlimited): " limitip
+# --- Input Masa Aktif dan Limit IP ---
+read -p "Expired (days): " masaaktif
+read -rp "Limit IP (1-5, 0=unlimited): " limitip
 
-# Logika Masa Aktif yang Diinginkan Pengguna (Display)
-if [ -z "$masaaktif" ] || [ "$masaaktif" == "0" ]; then
-    exp_date="Permanent"
-    EXPIRED_MS=0
-else
-    exp_date=$(date -d "$masaaktif days" +"%Y-%m-%d") # Logika Display Asli
-    EXPIRED_MS=$(( $(date +%s) + (masaaktif * 86400) ))000 # Logika Xray (ms)
+if ! [[ "$limitip" =~ ^[0-5]$ ]]; then
+    limitip=0
 fi
 
-# Konversi Limit IP
-if [ -z "$limitip" ]; then
-    LIMIT_IP=0
-else
-    LIMIT_IP=$limitip
-fi
+# Hitung Expired
+exp=$(date -d "$masaaktif days" +"%Y-%m-%d")
 
-# 3. KONSTRUKSI DAN INSERT CLIENT KE CONFIG.JSON
-NEW_CLIENT_JSON=$(cat << EOF
-          {
-            "id": "${uuid}",
-            "email": "${user}",
-            "limitIp": ${LIMIT_IP},
-            "expired": ${EXPIRED_MS}
-          },
-EOF
-)
-# Logic untuk menyisipkan client baru ke array "clients" di VMESS inbound (Port 4)
-sed -i "/\"port\": ${VMESS_INBOUND_PORT},/ {
-    :a
-    N
-    /\"clients\": \[/ {
-        s/\"clients\": \[/\"clients\": [\n${NEW_CLIENT_JSON}/
-    }
-}" "$CONFIG_FILE"
+# --- Insert ke Config (Format BARU: ### user exp limitip) ---
+sed -i '/###$/a\### '"$user $exp $limitip"'\
+},{"id": "'""$uuid""'","alterId": 0,"email": "'""$user""'"' "$CONFIG_FILE"
 
-# 4. RESTART XRAY
-systemctl restart xray
+# Restart Service
+systemctl restart v2ray
 
-# 5. LINK GENERATION (Standar NTLS DIKEMBALIKAN, Onering NTLS DIHAPUS)
-
-# --- FUNGSI GENERATE JSON VMESS (Base64) ---
-generate_vmess_link() {
-    local port=$1
-    local tls_status=$2
-    local address=$3
-    local host_header=$4
-    local tag=$5
-    local sni_value=$6
-    local vmess_aid="0" # Asumsi alterId 0
-
-    local json_payload=$(cat << JSON
+# --- GENERATE LINK (LENGKAP) ---
+# Fungsi Generate Base64
+generate_vmess_json() {
+    local add=$1
+    local port=$2
+    local tls=$3
+    local sni=$4
+    local type=$5
+    local net=$6
+    local path=$7
+    
+    cat << EOF
 {
-  "v": "2",
-  "ps": "${user}-${tag}",
-  "add": "${address}",
-  "port": "${port}",
-  "id": "${uuid}",
-  "aid": "${vmess_aid}",
-  "net": "ws",
-  "type": "none",
-  "host": "${host_header}",
-  "path": "/vmess",
-  "tls": "${tls_status}",
-  "sni": "${sni_value}"
+"v": "2",
+"ps": "${user}-${type}",
+"add": "${add}",
+"port": "${port}",
+"id": "${uuid}",
+"aid": "0",
+"net": "${net}",
+"path": "${path}",
+"type": "none",
+"host": "${domain}",
+"tls": "${tls}",
+"sni": "${sni}"
 }
-JSON
-)
-    echo -n "$json_payload" | base64 -w 0
+EOF
 }
 
-# --- LINK VMESS ASLI (MENGGUNAKAN $domain) ---
-vmesslink1="vmess://$(generate_vmess_link 443 tls $domain $domain Ori-TLS $domain)"
-vmesslink2="vmess://$(generate_vmess_link 80 none $domain $domain Ori-NTLS none)" # <-- DIKEMBALIKAN
+# 1. Link Standar (Original)
+vmesslink1="vmess://$(generate_vmess_json "${domain}" "443" "tls" "${domain}" "Ori-TLS" "ws" "/vmess" | base64 -w 0)"
+vmesslink2="vmess://$(generate_vmess_json "${domain}" "80" "none" "" "Ori-NTLS" "ws" "/vmess" | base64 -w 0)"
+vmesslink3="vmess://$(generate_vmess_json "${domain}" "443" "tls" "${domain}" "Ori-GRPC" "grpc" "vmess-grpc" | base64 -w 0)"
 
-# --- LINK VMESS ONERING (MENGGUNAKAN BUG_DOMAIN) ---
-ONERING_SNI_VALUE="onering:${HOST_HEADER}:${BUG_DOMAIN}"
-vmesslink_onering_tls="vmess://$(generate_vmess_link 443 tls $BUG_DOMAIN $HOST_HEADER Onering-TLS $ONERING_SNI_VALUE)"
-# Link Onering NTLS (Port 80) DIHAPUS
+# 2. Link Onering (Bug.com)
+vmesslink_onering_tls="vmess://$(generate_vmess_json "${BUG_DOMAIN}" "443" "tls" "${ONERING_SNI}" "Onering-TLS" "ws" "/vmess" | base64 -w 0)"
+vmesslink_onering_grpc="vmess://$(generate_vmess_json "${BUG_DOMAIN}" "443" "tls" "${ONERING_SNI}" "Onering-GRPC" "grpc" "vmess-grpc" | base64 -w 0)"
 
-# 6. OUTPUT TELEGRAM
+
+# --- OUTPUT TELEGRAM ---
 TEKS=$(cat <<EOF
 <b>───────────────────</b>
    VMESS ACCOUNT   
 <b>───────────────────</b>
 <b>Remarks     : </b><code>${user}</code>
 <b>Domain      : </b><code>${domain}</code>
-<b>Server Addr : </b><code>${BUG_DOMAIN}</code> (Onering)
-<b>Port Tls/NTLS:</b><code>443 / 80</code>
+<b>Onering Addr: </b><code>${BUG_DOMAIN}</code>
+<b>Port Tls    : </b><code>443</code>
 <b>UUID/ID     : </b><code>${uuid}</code>
+<b>AlterId     : </b><code>0</code>
 <b>Path        : </b><code>/vmess</code>
-<b>SNI Host    : </b><code>${HOST_HEADER}</code> <font color="#00ff00">(Original Host)</font>
+<b>SNI Onering : </b><code>${ONERING_SNI}</code>
+<b>Limit IP    : </b><code>${limitip}</code>
 <b>───────────────────</b>
-<b>1. Link Standar (SNI/Host: ${domain})</b>
+<b>1. Link Standar</b>
 <b>Link TLS    :</b>
 <pre>${vmesslink1}</pre>
-<b>Link NTLS   :</b>
+<b>Link NTLS  :</b>
 <pre>${vmesslink2}</pre>
+<b>Link GRPC   :</b>
+<pre>${vmesslink3}</pre>
 <b>───────────────────</b>
-<b>2. Link Onering (SNI/Host: bug.com)</b>
+<b>2. Link Onering</b>
 <b>Link TLS Onering :</b>
 <pre>${vmesslink_onering_tls}</pre>
+<b>Link GRPC Onering :</b>
+<pre>${vmesslink_onering_grpc}</pre>
 <b>───────────────────</b>
-<b>Limit IP    : </b><code>${LIMIT_IP}</code>
-<b>Expired On  : </b><code>$exp_date</code>
+<b>Expired On  : </b><code>$exp</code>
 <b>───────────────────</b>
 EOF
 )
@@ -170,27 +132,30 @@ curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
     -d "parse_mode=HTML" \
     --data-urlencode "text=$TEKS" > /dev/null
 
-# 7. OUTPUT TERMINAL
+# --- OUTPUT TERMINAL ---
 clear
 echo -e "───────────────────"
 echo -e "   VMESS ACCOUNT   "
 echo -e "───────────────────"
 echo -e "Remarks     : ${user}" 
 echo -e "Domain      : ${domain}" 
-echo -e "Server Addr : ${BUG_DOMAIN} (Onering)"
-echo -e "Port Tls/NTLS: 443 / 80" 
+echo -e "Onering Addr: ${BUG_DOMAIN}"
+echo -e "Port Tls    : 443" 
 echo -e "UUID/ID     : ${uuid}"
+echo -e "AlterId     : 0"
 echo -e "Path        : /vmess"
-echo -e "SNI Host    : ${HOST_HEADER}"
+echo -e "SNI Onering : ${ONERING_SNI}"
+echo -e "Limit IP    : ${limitip}"
 echo -e "───────────────────"
-echo -e "1. Link Standar (SNI/Host: ${domain})"
+echo -e "1. Link Standar"
 echo -e "Link TLS    : ${vmesslink1}"
 echo -e "Link NTLS   : ${vmesslink2}"
+echo -e "Link GRPC   : ${vmesslink3}"
 echo -e "───────────────────"
-echo -e "2. Link Onering (SNI/Host: ${BUG_DOMAIN})"
-echo -e "Link TLS Onering: ${vmesslink_onering_tls}"
+echo -e "2. Link Onering (Bug.com)"
+echo -e "Link TLS    : ${vmesslink_onering_tls}"
+echo -e "Link GRPC   : ${vmesslink_onering_grpc}"
 echo -e "───────────────────"
-echo -e "Limit IP    : ${LIMIT_IP}"
-echo -e "Expired On  : $exp_date"
+echo -e "Expired On  : $exp"
 echo -e "───────────────────"
 echo ""
