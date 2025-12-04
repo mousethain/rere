@@ -27,8 +27,8 @@ main_core_update() {
     TARGET_DIR="/usr/local/sbin" # Lokasi Instalasi Final: /usr/local/sbin/
     TEMP_DIR="/tmp"
     
-    # KOREKSI KRITIS: Menambahkan seting-onering ke daftar unduhan
-    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "setting-onering" "add-tr")
+    # KOREKSI KRITIS: Menambahkan script Limit IP dan Auto-Delete ke daftar unduhan
+    declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "setting-onering" "add-tr" "limit-xray")
     ALL_SUCCESS=true
     
     echo -e "${YELLOW}>> Mengunduh dan mengganti script utama ke $TARGET_DIR...${NC}"
