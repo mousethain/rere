@@ -14,6 +14,32 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
+# --- FUNGSI CRONJOB BARU ---
+add_cronjob() {
+    local cron_entry="*/2 * * * * /usr/local/sbin/limit-xray >/dev/null 2>&1"
+    local temp_cron="/tmp/crontab.tmp"
+
+    echo -e "${YELLOW}>> Memeriksa dan menambahkan Cronjob untuk limit-xray (setiap 2 menit)...${NC}"
+    
+    # Ambil crontab saat ini (2>/dev/null untuk menghindari error jika crontab kosong)
+    crontab -l 2>/dev/null > "$temp_cron"
+    
+    # Cek apakah entri sudah ada (menggunakan grep -F untuk pencarian string literal)
+    if grep -qF "$cron_entry" "$temp_cron"; then
+        echo -e "${GREEN}  -> Cronjob limit-xray sudah ada. Tidak ada perubahan.${NC}"
+    else
+        # Tambahkan entri baru
+        echo "$cron_entry" >> "$temp_cron"
+        
+        # Terapkan crontab
+        crontab "$temp_cron"
+        echo -e "${GREEN}  -> Cronjob limit-xray berhasil ditambahkan.${NC}"
+    fi
+    
+    rm -f "$temp_cron"
+}
+# ---------------------------
+
 main_core_update() {
     if [ -z "$VERSION_TO_INSTALL" ]; then
         echo -e "${RED}!! Error: Versi target update tidak ditemukan. Proses dibatalkan.${NC}"
@@ -27,7 +53,7 @@ main_core_update() {
     TARGET_DIR="/usr/local/sbin" # Lokasi Instalasi Final: /usr/local/sbin/
     TEMP_DIR="/tmp"
     
-    # KOREKSI KRITIS: Menambahkan script Limit IP dan Auto-Delete ke daftar unduhan
+    # KOREKSI: Menghapus 'xp' dan memastikan 'limit-xray' ada di daftar unduhan.
     declare -a SCRIPTS=("menu" "add-vless" "add-vmess" "setting-onering" "add-tr" "limit-xray")
     ALL_SUCCESS=true
     
@@ -58,6 +84,7 @@ main_core_update() {
                 echo -e "${YELLOW}     -> Gagal: Mengembalikan $script dari backup.${NC}"
             fi
             rm -f "$DOWNLOAD_PATH"
+            continue # Lanjut ke skrip berikutnya meskipun gagal
         else
             # 3. Instalasi dan Cleanup (jika sukses)
             mv "$DOWNLOAD_PATH" "$TARGET_PATH"
@@ -79,21 +106,25 @@ main_core_update() {
         chmod 644 "$ONERING_CONFIG_FILE"
     fi
     
-    # D. Restart Service
+    # D. Otomatisasi Cronjob untuk limit-xray (FUNGSI BARU)
+    add_cronjob
+    
+    # E. Restart Service
     echo -e "${YELLOW}>> Me-restart layanan Xray...${NC}"
     systemctl restart v2ray
     
-    # E. KOREKSI CACHE: Membersihkan Cache Shell
+    # F. KOREKSI CACHE: Membersihkan Cache Shell
     echo -e "${YELLOW}>> Membersihkan cache shell komando (hash table)...${NC}"
     hash -r
     
-    # F. Laporan Akhir
+    # G. Laporan Akhir
     if $ALL_SUCCESS; then
         # Hapus sisa file di /usr/local/bin/ yang tidak terpakai lagi
         rm -f /usr/local/bin/menu /usr/local/bin/add-vless /usr/local/bin/add-vmess
         
         echo -e "${GREEN}==============================================${NC}"
         echo -e "${GREEN}  Pembaruan Core ${VERSION_TO_INSTALL} SUKSES PENUH!${NC}"
+        echo -e "${GREEN}  Fitur Limit IP telah diaktifkan secara otomatis.${NC}"
         echo -e "${GREEN}  Silakan jalankan 'menu' dan set Domain Onering (Opsi 13).${NC}"
         echo -e "${GREEN}==============================================${NC}"
         return 0 
