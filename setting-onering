@@ -7,7 +7,7 @@
 NGINX_CONF="/etc/nginx/nginx.conf"
 SNI_LIST_FILE="/usr/local/etc/v2ray/onering_list"
 # GANTI INI: Pastikan ini adalah DOMAIN UTAMA yang ada di sertifikat Anda
-MAIN_DOMAIN="x.mousevpn.my.id"
+MAIN_DOMAIN="mousevpn.my.id"
 
 # --- KONFIGURASI XTLS REALITY TAMBAHAN ---
 V2RAY_CONF="/usr/local/etc/v2ray/config.json"
