@@ -15,9 +15,9 @@ ONERING_SNI="onering:${domain}:${BUG_DOMAIN}"
 # KONFIGURASI XTLS REALITY (WAJIB GANTI PUBLIC KEY)
 # Public Key harus sesuai dengan Private Key di config.json.
 # Private Key Anda di config.json: sEL-C5kDMX-B_-ko4iJKTtgDDCJiD9SydkrJmJkXXUA
-REALITY_PBK="eL-C5kDMX-B_-ko4iJKTtgDDCJiD9SydkrJmJkXXUA" # !!! GANTI INI DENGAN PUBLIC KEY ANDA !!!
+REALITY_PBK="8QNWX2c028F1VuZMOlcZJxqwgNLkUo7THM67ekc8SBw" # <-- NILAI PUBLIC KEY YANG BENAR
 REALITY_PORT="8443"
-REALITY_SID="jLrz-DVDZ76aqKqmftRyT7u3YvBqbNvmrB0JFrr-rhk" # Short ID dari config.json
+REALITY_SID="jLrz-DVDZ76aqKqmftRyT7u3YvBqbNvmrB0JFrr-rhk" # Short ID (Hash32)
 # =========================================================================
 
 red() { echo -e "\033[32;1m${*}\033[0m"; }
